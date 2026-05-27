@@ -222,7 +222,7 @@ public class LKeyinCommand
             _paletteSet = new PaletteSet("Cadastre Tools", new Guid("D7CE4893-6F1D-4A9B-B85E-37F15002C9FA"));
             _paletteSet.Size = new System.Drawing.Size(320, 700);
             _paletteSet.DockEnabled = DockSides.Left | DockSides.Right;
-            _paletteSet.Dock = DockSides.Right;
+            _paletteSet.Dock = DockSides.Left;
             _paletteSet.KeepFocus = true;
             
             _control = new CadastreWpfWindow(doc);
@@ -510,8 +510,14 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
     private StackPanel pnlHistory = null!;
     private TextBlock lblStats = null!;
 
+    // Smart Active Status Header Controls
+    private Border cardStatus = null!;
+    private TextBlock lblStatusText = null!;
+    private System.Windows.Shapes.Ellipse elStatusDot = null!;
+
     // Controls
-    private TextBox txtBearing = null!, txtDistance = null!, txtScale = null!;
+    private TextBox txtBearing = null!, txtDistance = null!;
+    private ComboBox cbScale = null!;
     private TextBlock lblBearingTrace = null!, lblDistanceTrace = null!;
     private Button btnSound = null!;
 
@@ -589,7 +595,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                 {
                     _plotScale = newScale;
                     this.Dispatcher.BeginInvoke(new Action(() => {
-                        if (txtScale != null) txtScale.Text = _plotScale.ToString("0"); // Integer representation
+                        if (cbScale != null) cbScale.Text = $"1:{_plotScale:0}";
                         ScaleAllText();
                     }));
                 }
@@ -770,6 +776,60 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         }
     }
 
+    private void UpdateStatusIndicator()
+    {
+        if (cardStatus == null || lblStatusText == null || elStatusDot == null) return;
+        
+        bool active = this.IsKeyboardFocusWithin;
+        
+        if (active)
+        {
+            cardStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 255, 200)); // Neon Cyan
+            cardStatus.Background = new SolidColorBrush(Color.FromRgb(15, 35, 30)); // Subtle dark teal
+            lblStatusText.Text = "ACTIVE";
+            lblStatusText.Foreground = new SolidColorBrush(Color.FromRgb(0, 255, 200));
+            elStatusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 255, 100)); // Active Green
+            cardStatus.Effect = new DropShadowEffect() { BlurRadius = 4, ShadowDepth = 0, Color = Color.FromRgb(0, 255, 200), Opacity = 0.5 };
+        }
+        else
+        {
+            cardStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(70, 70, 75)); // Slate Gray
+            cardStatus.Background = Brushes.Transparent;
+            lblStatusText.Text = "INACTIVE";
+            lblStatusText.Foreground = Brushes.Gray;
+            elStatusDot.Fill = Brushes.Gray;
+            cardStatus.Effect = null;
+        }
+    }
+
+    private double ParseScaleText(string text)
+    {
+        string clean = text.Trim();
+        if (clean.Contains(":"))
+        {
+            string[] parts = clean.Split(':');
+            if (parts.Length == 2 && double.TryParse(parts[1], out double val)) return val;
+        }
+        else
+        {
+            if (double.TryParse(clean, out double val)) return val;
+        }
+        return -1;
+    }
+
+    private void ApplyNewScale(double val)
+    {
+        _isSyncingScale = true;
+        try {
+            _plotScale = val;
+            SetCadAnnotativeScale(val);
+            ScaleAllText();
+            _doc.Editor.Regen();
+        } finally {
+            _isSyncingScale = false;
+        }
+    }
+
     private void InitializeCustomUI()
     {
         this.Background = UITheme.BackgroundBrush;
@@ -793,6 +853,16 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         this.PreviewKeyDown += Window_PreviewKeyDown;
         UpdateSoundIcon();
 
+        // Focus & Smart Switch event listeners
+        this.IsKeyboardFocusWithinChanged += (s, e) => UpdateStatusIndicator();
+        this.MouseEnter += (s, e) =>
+        {
+            if (txtBearing != null && !txtBearing.IsFocused && !txtDistance.IsFocused && !cbScale.IsFocused)
+            {
+                ReturnToBearing();
+            }
+        };
+
         this.Loaded += (s, e) => 
         {
             if (txtBearing != null) 
@@ -800,58 +870,118 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                 txtBearing.Focus(); 
                 txtBearing.SelectAll();
             }
+            UpdateStatusIndicator();
         };
-    }    private UIElement BuildHeaderIcons()
+    }
+
+    private UIElement BuildHeaderIcons()
     {
         StackPanel sp = new StackPanel() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 3, 5, 3), VerticalAlignment = VerticalAlignment.Center };
         
-        // Plot Scale Input
+        // Plot Scale Input (Styled like Civil 3D Annotation Scale selector)
         StackPanel spScale = new StackPanel() { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
-        Label lblScale = UITheme.CreateLabel("SCALE 1:");
-        lblScale.VerticalAlignment = VerticalAlignment.Center;
-        lblScale.Margin = new Thickness(0, 0, 2, 0);
-        spScale.Children.Add(lblScale);
-        txtScale = new TextBox() { Text = _plotScale.ToString("G"), Width = 40, Height = 22, Background = UITheme.InputBackground, Foreground = Brushes.Cyan, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, ToolTip = "Enter target plot scale (e.g., 500 for 1:500) and press ENTER to update drawing." };
-        txtScale.TextChanged += (s, e) => { 
-            if (double.TryParse(txtScale.Text, out double val) && val > 0) 
+
+        // Smart Active Status Indicator left of Scale
+        cardStatus = new Border() {
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(70, 70, 75)),
+            CornerRadius = new CornerRadius(3),
+            Padding = new Thickness(5, 2, 5, 2),
+            Margin = new Thickness(0, 0, 8, 0),
+            Cursor = Cursors.Hand,
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = "Shows if palette shortcuts are active. Click to activate shortcuts instantly."
+        };
+        cardStatus.MouseDown += (s, e) => ReturnToBearing();
+
+        Grid gStatus = new Grid();
+        gStatus.ColumnDefinitions.Add(new ColumnDefinition() { Width = GridLength.Auto }); // Dot
+        gStatus.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) }); // Text
+
+        elStatusDot = new System.Windows.Shapes.Ellipse() {
+            Width = 6,
+            Height = 6,
+            Fill = Brushes.Gray,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 4, 0)
+        };
+
+        lblStatusText = new TextBlock() {
+            Text = "INACTIVE",
+            Foreground = Brushes.LightGray,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 9.5,
+            FontWeight = FontWeights.Bold,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        Grid.SetColumn(elStatusDot, 0); gStatus.Children.Add(elStatusDot);
+        Grid.SetColumn(lblStatusText, 1); gStatus.Children.Add(lblStatusText);
+        cardStatus.Child = gStatus;
+
+        spScale.Children.Add(cardStatus);
+
+        // Civil 3D Annotation Scale selector ComboBox
+        cbScale = new ComboBox() {
+            Width = 85,
+            Height = 22,
+            IsEditable = true,
+            Background = UITheme.InputBackground,
+            Foreground = Brushes.Cyan,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brushes.Gray,
+            ToolTip = "Select or enter target plot scale (e.g., 1:1000, 1:2000)."
+        };
+
+        // Populate common scales
+        string[] commonScales = { "1:100", "1:200", "1:250", "1:500", "1:1000", "1:2000", "1:2500", "1:5000" };
+        foreach (var sc in commonScales) cbScale.Items.Add(sc);
+        cbScale.Text = $"1:{_plotScale:0}";
+
+        cbScale.SelectionChanged += (s, e) => {
+            if (cbScale.SelectedItem is string selText)
             {
-                if (ValidateScaleExists(val))
+                double val = ParseScaleText(selText);
+                if (val > 0 && ValidateScaleExists(val) && !_isSyncingScale)
                 {
-                    txtScale.Foreground = Brushes.Cyan;
-                    _plotScale = val;
+                    ApplyNewScale(val);
+                }
+            }
+        };
+
+        cbScale.LostFocus += (s, e) => {
+            double val = ParseScaleText(cbScale.Text);
+            if (val > 0 && ValidateScaleExists(val))
+            {
+                cbScale.Text = $"1:{val:0}";
+                if (!_isSyncingScale) ApplyNewScale(val);
+            }
+        };
+
+        cbScale.KeyDown += (s, e) => {
+            if (e.Key == Key.Enter) {
+                double val = ParseScaleText(cbScale.Text);
+                if (val > 0 && ValidateScaleExists(val))
+                {
+                    cbScale.Text = $"1:{val:0}";
+                    if (!_isSyncingScale) ApplyNewScale(val);
+                    txtBearing.Focus();
+                    txtBearing.SelectAll();
                 }
                 else
                 {
-                    txtScale.Foreground = Brushes.OrangeRed;
+                    _doc.Editor.WriteMessage($"\n[Error] Invalid or undefined scale: {cbScale.Text}");
+                    System.Media.SystemSounds.Exclamation.Play();
                 }
             }
-            else if (string.IsNullOrWhiteSpace(txtScale.Text)) _plotScale = 1000.0;
         };
-        txtScale.KeyDown += (s, e) => {
-            if (e.Key == Key.Enter) {
-                if (double.TryParse(txtScale.Text, out double val) && val > 0) {
-                    if (ValidateScaleExists(val))
-                    {
-                        _isSyncingScale = true;
-                        try {
-                            _plotScale = val;
-                            SetCadAnnotativeScale(val);
-                            ScaleAllText();
-                            _doc.Editor.Regen();
-                            txtBearing.Focus();
-                            txtBearing.SelectAll();
-                        } finally {
-                            _isSyncingScale = false;
-                        }
-                    }
-                    else
-                    {
-                        _doc.Editor.WriteMessage($"\n[Error] Scale '1:{val}' is not defined in this drawing.");
-                        System.Media.SystemSounds.Exclamation.Play();
-                    }
-                }
-            }
-        };        spScale.Children.Add(txtScale);
+
+        spScale.Children.Add(cbScale);
  
         // Visibility Toggles
         Button btnTglBrg = new Button() { Content = "\u2221", Width = 28, Height = 28, FontSize = 14, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Foreground = Brushes.Yellow, ToolTip = "Toggle Bearing Visibility", Margin = new Thickness(1, 0, 1, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -1038,7 +1168,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
         HelpWpfWindow hWin = new HelpWpfWindow(aboutMsg);
         hWin.Owner = System.Windows.Window.GetWindow(this);
-        hWin.Show(); // Modeless
+        hWin.Show();
     }
     #endregion
 
@@ -1056,7 +1186,6 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         Border cardData = UITheme.CreateCard(); cardData.Margin = new Thickness(10, 6, 10, 6);
         StackPanel spData = new StackPanel();
 
-        // --- Traverse Setup Row (E & N / PICK) ---
         Grid gPos = new Grid();
         gPos.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
         gPos.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
