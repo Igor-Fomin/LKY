@@ -2212,6 +2212,13 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         this.Visibility = System.Windows.Visibility.Collapsed;
         System.Windows.Forms.Application.DoEvents();
         
+        try
+        {
+            doc.Window.Focus();
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+        }
+        catch { }
+
         PromptPointResult ppr = ed.GetPoint("\nPick Start Point: ");
         
         this.Visibility = System.Windows.Visibility.Visible;
@@ -2245,6 +2252,13 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                     this.Visibility = System.Windows.Visibility.Collapsed;
                     System.Windows.Forms.Application.DoEvents();
  
+                    try
+                    {
+                        doc.Window.Focus();
+                        Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+                    }
+                    catch { }
+
                     PromptPointResult ppr = doc.Editor.GetPoint("\nPick Start Point: ");
                     
                     this.Visibility = System.Windows.Visibility.Visible;
