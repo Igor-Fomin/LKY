@@ -1276,22 +1276,22 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         r1.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
         r1.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
 
-        Button btnSwapText = UITheme.CreateActionBtn("Swap Text", UITheme.ActionBlue); btnSwapText.Height = 28; btnSwapText.Margin = new Thickness(1.5);
-        btnSwapText.FontSize = 10;
-        btnSwapText.ToolTip = "Swaps the positions of bearing and distance labels.";
-        btnSwapText.Click += (s, e) => ExecuteUiAction(() => ExecuteSwapText());
+        Button btnSwapText = UITheme.CreateActionBtn("", UITheme.ActionBlue); btnSwapText.Height = 32; btnSwapText.Margin = new Thickness(1.5);
+        btnSwapText.Content = UITheme.CreateShortcutContent("Shift+Z", "Swap Text");
+        btnSwapText.ToolTip = "Swaps the positions of bearing and distance labels. (SHIFT+Z)";
+        btnSwapText.Click += (s, e) => { ExecuteUiAction(() => ExecuteSwapText()); ReturnToBearing(); };
         Grid.SetColumn(btnSwapText, 0); r1.Children.Add(btnSwapText);
 
-        Button btnRot180 = UITheme.CreateActionBtn("180\u00B0 Text", UITheme.ActionBlue); btnRot180.Height = 28; btnRot180.Margin = new Thickness(1.5);
-        btnRot180.FontSize = 10;
-        btnRot180.ToolTip = "Reverses the direction of a selected bearing by adding 180 degrees.";
-        btnRot180.Click += (s, e) => ExecuteUiAction(() => RotateBearingText());
+        Button btnRot180 = UITheme.CreateActionBtn("", UITheme.ActionBlue); btnRot180.Height = 32; btnRot180.Margin = new Thickness(1.5);
+        btnRot180.Content = UITheme.CreateShortcutContent("Shift+X", "180\u00B0 Text");
+        btnRot180.ToolTip = "Reverses the direction of a selected bearing by adding 180 degrees. (SHIFT+X)";
+        btnRot180.Click += (s, e) => { ExecuteUiAction(() => RotateBearingText()); ReturnToBearing(); };
         Grid.SetColumn(btnRot180, 1); r1.Children.Add(btnRot180);
 
-        Button btnAnnotate = UITheme.CreateActionBtn("Annotate Line", UITheme.ActionBlue); btnAnnotate.Height = 28; btnAnnotate.Margin = new Thickness(1.5);
-        btnAnnotate.FontSize = 10;
-        btnAnnotate.ToolTip = "Pick a drawing line to automatically calculate and place new labels on it.";
-        btnAnnotate.Click += (s, e) => ExecuteUiAction(() => AnnotateSelectedLine());
+        Button btnAnnotate = UITheme.CreateActionBtn("", UITheme.ActionBlue); btnAnnotate.Height = 32; btnAnnotate.Margin = new Thickness(1.5);
+        btnAnnotate.Content = UITheme.CreateShortcutContent("Shift+C", "Annotate");
+        btnAnnotate.ToolTip = "Pick a drawing line to automatically calculate and place new labels on it. (SHIFT+C)";
+        btnAnnotate.Click += (s, e) => { ExecuteUiAction(() => AnnotateSelectedLine()); ReturnToBearing(); };
         Grid.SetColumn(btnAnnotate, 2); r1.Children.Add(btnAnnotate);
 
         Grid.SetRow(r1, 0); gAnn.Children.Add(r1);
@@ -1410,6 +1410,15 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         else if (e.Key == Key.End) { e.Handled = true; TriggerCoordsWindow(); ReturnToBearing(); }
         else if (e.Key == Key.Insert) { e.Handled = true; ExecuteUiAction(() => AddTextComment(null)); ReturnToBearing(); }
         else if (e.Key == Key.Delete) { e.Handled = true; ExecuteUiAction(() => UndoLastStep()); ReturnToBearing(); }
+
+        // Option A: Left-Hand Modifiers
+        bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+        if (shift)
+        {
+            if (e.Key == Key.Z) { e.Handled = true; ExecuteUiAction(() => ExecuteSwapText()); ReturnToBearing(); }
+            else if (e.Key == Key.X) { e.Handled = true; ExecuteUiAction(() => RotateBearingText()); ReturnToBearing(); }
+            else if (e.Key == Key.C) { e.Handled = true; ExecuteUiAction(() => AnnotateSelectedLine()); ReturnToBearing(); }
+        }
     }
 
     private void Input_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -2388,6 +2397,13 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
         try
         {
+            _doc.Window.Focus();
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+        }
+        catch { }
+
+        try
+        {
             while (true)
             {
                 PromptEntityOptions peo = new PromptEntityOptions("\nSelect boundary line to swap text (or press ESC to exit): ");
@@ -2490,6 +2506,13 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                 this.Visibility = System.Windows.Visibility.Collapsed;
                 System.Windows.Forms.Application.DoEvents();
 
+                try
+                {
+                    _doc.Window.Focus();
+                    Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+                }
+                catch { }
+
                 PromptEntityOptions peo = new PromptEntityOptions("\nSelect bearing TEXT to flip 180\u00B0 (or press ESC to exit): ");
                 peo.SetRejectMessage("\nOnly text objects can be selected.");
                 peo.AddAllowedClass(typeof(DBText), false);
@@ -2553,6 +2576,13 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
             {
                 this.Visibility = System.Windows.Visibility.Collapsed;
                 System.Windows.Forms.Application.DoEvents();
+
+                try
+                {
+                    _doc.Window.Focus();
+                    Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+                }
+                catch { }
 
                 PromptEntityOptions peo = new PromptEntityOptions("\nSelect line to annotate (or press ESC to exit): ");
                 peo.SetRejectMessage("\nOnly lines can be selected.");
