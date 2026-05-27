@@ -209,6 +209,8 @@ public class LKeyinCommand
     private static PaletteSet? _paletteSet = null;
     private static CadastreWpfWindow? _control = null;
 
+    public static PaletteSet? PaletteSetInstance => _paletteSet;
+
     [CommandMethod("LKY", CommandFlags.Session)]
     public void RunLKeyin()
     {
@@ -221,6 +223,7 @@ public class LKeyinCommand
             _paletteSet.Size = new System.Drawing.Size(320, 700);
             _paletteSet.DockEnabled = DockSides.Left | DockSides.Right;
             _paletteSet.Dock = DockSides.Right;
+            _paletteSet.KeepFocus = true;
             
             _control = new CadastreWpfWindow(doc);
             _paletteSet.AddVisual("Cadastre Lines", _control);
@@ -1103,16 +1106,16 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         Grid gBrgBtns = new Grid();
         for (int i = 0; i < 4; i++) gBrgBtns.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(34) });
 
-        Button CreateBrgBtn(string text, string tip, double delta) {
-            Button b = new Button() { Content = text, Width = 32, Height = 32, Margin = new Thickness(2, 0, 0, 0), Background = UITheme.ActionBlue, Foreground = Brushes.White, FontFamily = new FontFamily("Segoe UI"), FontWeight = FontWeights.SemiBold, FontSize = 10, ToolTip = tip };
+        Button CreateBrgBtn(object content, string tip, double delta) {
+            Button b = new Button() { Content = content, Width = 32, Height = 32, Margin = new Thickness(2, 0, 0, 0), Background = UITheme.ActionBlue, Foreground = Brushes.White, ToolTip = tip };
             b.Click += (s, e) => { ModifyBearing(delta); txtBearing.Focus(); txtBearing.SelectAll(); };
             return b;
         }
 
-        Button bP90 = CreateBrgBtn("+90", "\u21BB Rotate bearing +90\u00B0", 90);
-        Button bM90 = CreateBrgBtn("-90", "\u21BA Rotate bearing -90\u00B0", -90);
-        Button bP180 = CreateBrgBtn("+180", "\u21C5 Rotate bearing +180\u00B0", 180);
-        Button bM180 = CreateBrgBtn("-180", "\u21C5 Rotate bearing -180\u00B0", -180);
+        Button bP90 = CreateBrgBtn(UITheme.CreateShortcutContent("UP", "+90"), "\u21BB Rotate bearing +90\u00B0", 90);
+        Button bM90 = CreateBrgBtn(UITheme.CreateShortcutContent("DOWN", "-90"), "\u21BA Rotate bearing -90\u00B0", -90);
+        Button bP180 = CreateBrgBtn(UITheme.CreateShortcutContent("RIGHT", "+180"), "\u21C5 Rotate bearing +180\u00B0", 180);
+        Button bM180 = CreateBrgBtn(UITheme.CreateShortcutContent("LEFT", "-180"), "\u21C5 Rotate bearing -180\u00B0", -180);
 
         Grid.SetColumn(bP90, 0); Grid.SetColumn(bM90, 1); Grid.SetColumn(bP180, 2); Grid.SetColumn(bM180, 3);
         gBrgBtns.Children.Add(bP90); gBrgBtns.Children.Add(bM90); gBrgBtns.Children.Add(bP180); gBrgBtns.Children.Add(bM180);
@@ -1368,10 +1371,28 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
     #endregion
 
     #region UI & Input Handlers
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetFocus(IntPtr hWnd);
+
     private void ReturnToBearing()
     {
-        txtBearing.Focus();
-        txtBearing.SelectAll();
+        // 1. Force physical Win32 focus to the WPF user control docked host window
+        try
+        {
+            var source = System.Windows.PresentationSource.FromVisual(this) as System.Windows.Interop.HwndSource;
+            if (source != null)
+            {
+                SetFocus(source.Handle);
+            }
+        }
+        catch { }
+
+        // 2. Queue logical WPF focus on the txtBearing textbox asynchronously
+        this.Dispatcher.BeginInvoke(new Action(() => {
+            txtBearing.Focus();
+            Keyboard.Focus(txtBearing);
+            txtBearing.SelectAll();
+        }), System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
