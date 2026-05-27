@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<!-- Target Framework for AutoCAD 2025/2026 -->
@@ -11,6 +11,12 @@
 		<UseWPF>true</UseWPF>
 		<UseWindowsForms>true</UseWindowsForms>
 		<PlatformTarget>x64</PlatformTarget>
+
+		<!-- Dynamic Assembly Name Suffix to avoid file locks in AutoCAD -->
+		<SuffixFile>$(MSBuildProjectDirectory)\LKEYIN_Suffix.txt</SuffixFile>
+		<Suffix Condition="Exists('$(SuffixFile)')">$([System.IO.File]::ReadAllText('$(SuffixFile)').Trim())</Suffix>
+		<Suffix Condition="!Exists('$(SuffixFile)')">1</Suffix>
+		<AssemblyName>LKEYIN_WPF_$(Suffix)</AssemblyName>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -55,5 +61,14 @@
 	<ItemGroup>
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
 	</ItemGroup>
+
+	<!-- Target to increment the suffix after a successful build -->
+	<Target Name="IncrementSuffix" AfterTargets="Build">
+		<PropertyGroup>
+			<NextSuffix>$([MSBuild]::Add($(Suffix), 1))</NextSuffix>
+		</PropertyGroup>
+		<WriteLinesToFile File="$(SuffixFile)" Lines="$(NextSuffix)" Overwrite="true" />
+		<Message Importance="high" Text="----- INCREMENTED ASSEMBLY SUFFIX TO $(NextSuffix) FOR THE NEXT BUILD -----" />
+	</Target>
 
 </Project>
