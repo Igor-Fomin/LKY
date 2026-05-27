@@ -1,0 +1,59 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!-- Target Framework for AutoCAD 2025/2026 -->
+		<TargetFramework>net8.0-windows</TargetFramework>
+		<UseWindowsForms>true</UseWindowsForms>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>disable</ImplicitUsings>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<Platforms>AnyCPU;x64</Platforms>
+		<UseWPF>true</UseWPF>
+		<UseWindowsForms>true</UseWindowsForms>
+		<PlatformTarget>x64</PlatformTarget>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- STANDARD AUTOCAD REFERENCES -->
+		<Reference Include="AcMgd">
+			<HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcMgd.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="AcDbMgd">
+			<HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcDbMgd.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="AcCoreMgd">
+			<HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcCoreMgd.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+
+		<!-- CIVIL 3D REFERENCES (Remove if not using Civil 3D) -->
+		<Reference Include="AeccDbMgd">
+			<HintPath>C:\Program Files\Autodesk\AutoCAD 2026\C3D\AeccDbMgd.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="AecBaseMgd">
+			<HintPath>C:\Program Files\Autodesk\AutoCAD 2026\ACA\AecBaseMgd.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="PresentationCore">
+		  <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2\PresentationCore.dll</HintPath>
+		  <Private>False</Private>
+		</Reference>
+		<Reference Include="PresentationFramework">
+		  <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2\PresentationFramework.dll</HintPath>
+		  <Private>False</Private>
+		</Reference>
+		<Reference Include="System.Xaml">
+		  <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2\System.Xaml.dll</HintPath>
+		  <Private>False</Private>
+		</Reference>
+	</ItemGroup>
+
+	<!-- Add Newtonsoft.Json automatically -->
+	<ItemGroup>
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+	</ItemGroup>
+
+</Project>
