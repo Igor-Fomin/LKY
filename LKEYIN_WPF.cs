@@ -488,6 +488,8 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
     private string _currentLayer = "BOUNDARY_SUBJECT";
     private bool _isBusy = false;
     private bool _isSyncingScale = false;
+    private bool _feetMode = false;
+    private bool _distanceIsConverted = false;
     private double _plotScale = 1000.0;
     private double _prevPlotScale;
     private double GetModelSize(double paperSize) => paperSize * (_plotScale / 1000.0);
@@ -1127,14 +1129,60 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         Grid.SetRow(lblDist, 3); Grid.SetColumnSpan(lblDist, 2);
         gInputMaster.Children.Add(lblDist);
 
-        // txtDistance (Row 4, Col 0)
+        // Wrap txtDistance and btnFeet in a sub-grid to support Feet-to-Meters conversions
+        Grid gDistSub = new Grid();
+        gDistSub.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
+        gDistSub.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(42) });
+
         txtDistance = UITheme.CreateInputBox();
         txtDistance.Height = 32;
         txtDistance.PreviewKeyDown += Input_PreviewKeyDown;
         txtDistance.GotFocus += (s, e) => { txtDistance.BorderBrush = Brushes.WhiteSmoke; txtDistance.BorderThickness = new Thickness(1.5); };
         txtDistance.LostFocus += (s, e) => { txtDistance.BorderBrush = Brushes.Gray; txtDistance.BorderThickness = new Thickness(1); };
-        Grid.SetRow(txtDistance, 4); Grid.SetColumn(txtDistance, 0);
-        gInputMaster.Children.Add(txtDistance);
+        txtDistance.TextChanged += (s, e) => { _distanceIsConverted = false; };
+        Grid.SetColumn(txtDistance, 0);
+        gDistSub.Children.Add(txtDistance);
+
+        Button btnFeet = new Button() {
+            Content = "m",
+            Width = 38,
+            Height = 32,
+            Margin = new Thickness(4, 0, 0, 0),
+            Background = new SolidColorBrush(Color.FromRgb(60, 60, 60)),
+            Foreground = Brushes.White,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 10.5,
+            ToolTip = "Toggle Input Unit: Meters (m) / Feet (ft)"
+        };
+        
+        btnFeet.Click += (s, e) => {
+            _feetMode = !_feetMode;
+            if (_feetMode)
+            {
+                btnFeet.Background = new SolidColorBrush(Color.FromRgb(243, 156, 18)); // Vibrant survey orange
+                btnFeet.Foreground = Brushes.Black;
+                btnFeet.Content = "ft";
+                btnFeet.FontWeight = FontWeights.Bold;
+                lblDistanceTrace.Text = "[UNIT ACTIVE] Input distances in FEET (will convert to METERS).";
+            }
+            else
+            {
+                btnFeet.Background = new SolidColorBrush(Color.FromRgb(60, 60, 60));
+                btnFeet.Foreground = Brushes.White;
+                btnFeet.Content = "m";
+                btnFeet.FontWeight = FontWeights.SemiBold;
+                lblDistanceTrace.Text = "[UNIT ACTIVE] Input distances in METERS.";
+            }
+            txtDistance.Focus();
+            txtDistance.SelectAll();
+        };
+
+        Grid.SetColumn(btnFeet, 1);
+        gDistSub.Children.Add(btnFeet);
+
+        Grid.SetRow(gDistSub, 4); Grid.SetColumn(gDistSub, 0);
+        gInputMaster.Children.Add(gDistSub);
 
         // SIDE SHOT Button (Row 4, Col 1)
         Button bSS = new Button() { 
@@ -1367,7 +1415,20 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                 {
                     tb.Text = result;
                     if (tb == txtBearing) lblBearingTrace.Text = $"{oldVal} = {result} ({CadMath.FormatAsSurveyor(double.Parse(result))})";
-                    else lblDistanceTrace.Text = $"{oldVal} = {result}";
+                    else
+                    {
+                        if (_feetMode && !_distanceIsConverted && double.TryParse(result, out double ftVal))
+                        {
+                            double mVal = ftVal * 0.3048;
+                            tb.Text = mVal.ToString("0.000");
+                            _distanceIsConverted = true;
+                            lblDistanceTrace.Text = $"{oldVal} = {ftVal:F3} ft = {mVal:F3} m";
+                        }
+                        else
+                        {
+                            lblDistanceTrace.Text = $"{oldVal} = {result}";
+                        }
+                    }
                     
                     tb.Foreground = Brushes.White;
                     tb.FontWeight = FontWeights.Bold;
@@ -1412,6 +1473,14 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                         // Don't draw if one is missing, but also don't show warning if just tabbing through
                         if (string.IsNullOrWhiteSpace(txtBearing.Text)) txtBearing.Focus();
                         return;
+                    }
+
+                    if (_feetMode && !_distanceIsConverted && double.TryParse(tb.Text, out double ftVal))
+                    {
+                        double mVal = ftVal * 0.3048;
+                        tb.Text = mVal.ToString("0.000");
+                        _distanceIsConverted = true;
+                        lblDistanceTrace.Text = $"{ftVal:F3} ft = {mVal:F3} m";
                     }
 
                     if (!_hasStartPoint)
@@ -2070,17 +2139,25 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         {
             if (!ValidateDocument()) return;
             ExecuteUiAction(() => {
+                string finalDist = dist;
+                if (_feetMode && double.TryParse(dist, out double feetVal))
+                {
+                    double meterVal = feetVal * 0.3048;
+                    finalDist = meterVal.ToString("0.000");
+                    lblDistanceTrace.Text = $"Side Shot: {feetVal:F3} ft = {meterVal:F3} m";
+                }
+
                 using (DocumentLock loc = _doc.LockDocument())
                 using (Transaction tr = _doc.TransactionManager.StartTransaction())
                 {
                     BlockTable bt = (BlockTable)tr.GetObject(_doc.Database.BlockTableId, OpenMode.ForRead);
                     BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-                    DrawGeometryToDatabase(tr, btr, brg, dist, _currentPoint, _currentLayer);
+                    DrawGeometryToDatabase(tr, btr, brg, finalDist, _currentPoint, _currentLayer);
                     if (!string.IsNullOrWhiteSpace(comm))
                     {
                         double rawBrg; 
                         CadMath.TryParseBearing(brg, out rawBrg);
-                        double distVal = double.Parse(dist);
+                        double distVal = double.Parse(finalDist);
                         double angleDeg = CadMath.ParseDmsToDegrees(rawBrg);
                         double rad = (90.0 - angleDeg) * (Math.PI / 180.0);
                         Point3d endPt = new Point3d(_currentPoint.X + (distVal * Math.Cos(rad)), _currentPoint.Y + (distVal * Math.Sin(rad)), _currentPoint.Z);
@@ -2711,22 +2788,23 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
             if (double.TryParse(numPart, NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
             {
-                // Round to 2 decimal places (centi-meters / 10mm) using Bankers' Rounding (ToEven)
-                double roundedVal = Math.Round(val, 2, MidpointRounding.ToEven);
+                // Round to the closest 5mm (0.005) using Bankers' Rounding (ToEven)
+                double roundedVal = Math.Round(val / 0.005, MidpointRounding.ToEven) * 0.005;
                 
-                // Format with 2 decimal places first to get standard representation (e.g. 12.30 or 12.32)
-                string formattedNum = roundedVal.ToString("0.00", CultureInfo.InvariantCulture);
+                // Format with up to 3 decimal places
+                string formattedNum = roundedVal.ToString("0.000", CultureInfo.InvariantCulture);
                 
-                // Apply NT trailing zero removal
-                // If it ends with .00, remove the .00 (e.g. 12.00 -> 12)
-                // If it ends with a 0 but has a decimal, remove the trailing 0 (e.g. 12.30 -> 12.3)
-                if (formattedNum.EndsWith(".00"))
+                // Strip trailing zeros from the decimal part
+                if (formattedNum.Contains("."))
                 {
-                    formattedNum = formattedNum.Substring(0, formattedNum.Length - 3);
-                }
-                else if (formattedNum.EndsWith("0"))
-                {
-                    formattedNum = formattedNum.Substring(0, formattedNum.Length - 1);
+                    while (formattedNum.EndsWith("0"))
+                    {
+                        formattedNum = formattedNum.Substring(0, formattedNum.Length - 1);
+                    }
+                    if (formattedNum.EndsWith("."))
+                    {
+                        formattedNum = formattedNum.Substring(0, formattedNum.Length - 1);
+                    }
                 }
                 
                 if (roundedVal == 1.0)
