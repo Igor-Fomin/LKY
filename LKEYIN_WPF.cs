@@ -2709,9 +2709,31 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
             string numPart = m.Groups[1].Value;
             string suffixPart = m.Groups[2].Value;
 
-            if (decimal.TryParse(numPart, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal val))
+            if (double.TryParse(numPart, NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
             {
-                string formattedNum = (val == 1.0m) ? "1.0" : val.ToString("G29");
+                // Round to 2 decimal places (centi-meters / 10mm) using Bankers' Rounding (ToEven)
+                double roundedVal = Math.Round(val, 2, MidpointRounding.ToEven);
+                
+                // Format with 2 decimal places first to get standard representation (e.g. 12.30 or 12.32)
+                string formattedNum = roundedVal.ToString("0.00", CultureInfo.InvariantCulture);
+                
+                // Apply NT trailing zero removal
+                // If it ends with .00, remove the .00 (e.g. 12.00 -> 12)
+                // If it ends with a 0 but has a decimal, remove the trailing 0 (e.g. 12.30 -> 12.3)
+                if (formattedNum.EndsWith(".00"))
+                {
+                    formattedNum = formattedNum.Substring(0, formattedNum.Length - 3);
+                }
+                else if (formattedNum.EndsWith("0"))
+                {
+                    formattedNum = formattedNum.Substring(0, formattedNum.Length - 1);
+                }
+                
+                if (roundedVal == 1.0)
+                {
+                    formattedNum = "1.0";
+                }
+
                 return formattedNum + suffixPart;
             }
         }
@@ -2720,13 +2742,104 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
     private string FormatBearingNT(string input)
     {
-        // Rule 1: Remove 00" if it follows minutes
-        string result = Regex.Replace(input, @"00""", "");
-        // Rule 2: Remove 00' if it result ends with it (sequential cleanup)
-        // Actually, the requirement says "if the result now ends in 00', remove that as well" 
-        // but also "ignores any text following the symbols".
-        // Let's use a more precise regex to target 00' specifically when it's part of the bearing.
-        result = Regex.Replace(result, @"00'", "");
+        // Normalize symbols for parsing
+        string normalized = input.Replace("%%d", "°").Replace("%%D", "°")
+                                 .Replace("%%135", "'")
+                                 .Replace("%%136", "\"");
+
+        // 1. Try to parse degree, minutes, seconds and suffix
+        Match match3 = Regex.Match(normalized, @"^(\d+)[°\u00B0](\d+)'(\d+)\""(\s*.*)$");
+        Match match2 = Regex.Match(normalized, @"^(\d+)[°\u00B0](\d+)'(\s*.*)$");
+        Match match1 = Regex.Match(normalized, @"^(\d+)[°\u00B0](\s*.*)$");
+
+        int d = 0, m = 0, s = 0;
+        string suffix = "";
+        bool parsed = false;
+
+        if (match3.Success)
+        {
+            d = int.Parse(match3.Groups[1].Value);
+            m = int.Parse(match3.Groups[2].Value);
+            s = int.Parse(match3.Groups[3].Value);
+            suffix = match3.Groups[4].Value;
+            parsed = true;
+
+            // Rounding logic for seconds: round to closest 10", Banker's rounding for exactly 5"
+            int lower = (s / 10) * 10;
+            int upper = lower + 10;
+            int roundedS;
+
+            if (s % 10 == 5)
+            {
+                int coeff = s / 10;
+                if (coeff % 2 == 0) roundedS = lower;
+                else roundedS = upper;
+            }
+            else if (s % 10 < 5)
+            {
+                roundedS = lower;
+            }
+            else
+            {
+                roundedS = upper;
+            }
+
+            if (roundedS == 60)
+            {
+                roundedS = 0;
+                m++;
+                if (m == 60)
+                {
+                    m = 0;
+                    d = (d + 1) % 360;
+                }
+            }
+            s = roundedS;
+        }
+        else if (match2.Success)
+        {
+            d = int.Parse(match2.Groups[1].Value);
+            m = int.Parse(match2.Groups[2].Value);
+            s = 0;
+            suffix = match2.Groups[3].Value;
+            parsed = true;
+        }
+        else if (match1.Success)
+        {
+            d = int.Parse(match1.Groups[1].Value);
+            m = 0;
+            s = 0;
+            suffix = match1.Groups[2].Value;
+            parsed = true;
+        }
+
+        if (parsed)
+        {
+            bool isQldText = input.Contains("%%d") || input.Contains("%%D") || input.Contains("%%135") || input.Contains("%%136");
+            string degSym = isQldText ? "%%d" : "\u00B0";
+            string minSym = isQldText ? "%%135" : "'";
+            string secSym = isQldText ? "%%136" : "\"";
+
+            string resultBrg = $"{d}{degSym}{m:00}{minSym}{s:00}{secSym}";
+
+            // Truncate 00" / %%136
+            resultBrg = resultBrg.Replace("00\"", "").Replace("00%%136", "");
+
+            // Truncate 00' / %%135 if it's now at the end of the bearing digits
+            if (resultBrg.EndsWith("00'") || resultBrg.EndsWith("00%%135"))
+            {
+                resultBrg = resultBrg.Substring(0, resultBrg.Length - (resultBrg.EndsWith("00'") ? 3 : 7));
+            }
+
+            return resultBrg + suffix;
+        }
+
+        // Fallback to simple replace if it didn't match the standard formats
+        string result = input.Replace("00\"", "").Replace("00%%136", "");
+        if (result.EndsWith("00'") || result.EndsWith("00%%135"))
+        {
+            result = result.Substring(0, result.Length - (result.EndsWith("00'") ? 3 : 7));
+        }
         return result;
     }
 
