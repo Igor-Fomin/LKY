@@ -572,7 +572,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
     // Controls
     private TextBox txtBearing = null!, txtDistance = null!;
-    private ComboBox cbScale = null!;
+    private TextBox cbScale = null!;
     private TextBlock lblBearingTrace = null!, lblDistanceTrace = null!;
     private Button btnSound = null!, btnFeet = null!;
 
@@ -1110,38 +1110,16 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
         spScale.Children.Add(cardStatus);
 
-        // Civil 3D Annotation Scale selector ComboBox
-        cbScale = new ComboBox() {
-            Width = 85,
-            Height = 22,
-            IsEditable = true,
-            Background = UITheme.InputBackground,
-            Foreground = Brushes.Cyan,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            FontFamily = new FontFamily("Segoe UI"),
-            FontSize = 10,
-            FontWeight = FontWeights.SemiBold,
-            BorderThickness = new Thickness(1),
-            BorderBrush = Brushes.Gray,
-            ToolTip = "Select or enter target plot scale (e.g., 1:1000, 1:2000)."
-        };
-
-        // Populate common scales
-        string[] commonScales = { "1:100", "1:200", "1:250", "1:500", "1:1000", "1:2000", "1:2500", "1:5000" };
-        foreach (var sc in commonScales) cbScale.Items.Add(sc);
+        // Civil 3D Annotation Scale selector TextBox (Styled like other plugin input boxes, no toggle arrow)
+        cbScale = UITheme.CreateInputBox();
+        cbScale.Width = 65;
+        cbScale.Height = 22;
+        cbScale.FontSize = 10;
+        cbScale.FontWeight = FontWeights.SemiBold;
+        cbScale.TextAlignment = System.Windows.TextAlignment.Center;
+        cbScale.Padding = new Thickness(0, 1, 0, 1);
+        cbScale.ToolTip = "Enter target plot scale (e.g., 1:1000, 1:2000).";
         cbScale.Text = $"1:{_plotScale:0}";
-
-        cbScale.SelectionChanged += (s, e) => {
-            if (cbScale.SelectedItem is string selText)
-            {
-                double val = ParseScaleText(selText);
-                if (val > 0 && ValidateScaleExists(val) && !_isSyncingScale)
-                {
-                    ApplyNewScale(val);
-                }
-            }
-        };
 
         cbScale.LostFocus += (s, e) => {
             double val = ParseScaleText(cbScale.Text);
@@ -1337,25 +1315,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
     private void ShowAboutPopup()
     {
-        string aboutMsg = "TECHNICAL HELP MANUAL - CADASTRE LINES\n\n" +
-                          "SECTION 1: CORE SYSTEM WORKFLOW\n" +
-                          "To initialize a traverse, establish the base coordinate origin by either manual Easting/Northing entry (End key) or by selecting an existing AutoCAD node directly in the drawing space (PgDn key). Once the origin is set, entering consecutive bearings and distances will automatically sequence the line geometry and draft the corresponding surveyor annotations.\n\n" +
-                          "SECTION 2: SMART FIELD & INPUT CAPABILITIES\n" +
-                          "Both the Bearing and Distance fields feature real-time inline evaluation, allowing you to enter mathematical equations (e.g., combining measurements using +, -, *, or / operators). Additionally, the active drawing layer can be switched instantly using the Q, W, E, A, S, and D hotkeys, which also dynamically updates the control panel UI colors.\n\n" +
-                          "SECTION 3: TRAVERSAL NAVIGATION & SHORTCUTS\n" +
-                          " • Arrow Keys: Instantly shift the current bearing by 90\u00B0 or 180\u00B0 increments.\n" +
-                          " • PgUp: Routes into the independent Side Shot/Radiation geometry window.\n" +
-                          " • Ins: Places a distinct, standalone text remark at the current station.\n" +
-                          " • Del: Securely steps backward by undoing the last line creation and automatically re-aligning the station point counter.\n\n" +
-                          "SECTION 4: INTERACTIVE ANNOTATION UTILITIES\n" +
-                          " • Swap Text: Scans the immediate perimeter of a boundary line to invert the relative placement of bearing and distance strings.\n" +
-                          " • 180\u00B0 Text: Targets and reverses the angle readout text on structural lines.\n" +
-                          " • Annotate Line: Calculates properties on selected CAD vectors to place clean surveyor strings dynamically.\n\n" +
-                          "SECTION 5: REGIONAL STANDARD MACRO SWEEPS\n" +
-                          " • QLD Format: Translates geometry to statutory layers (70, 35, TRAV, AABT), switches fonts to survacad.shx, applies a cursive 20\u00B0 slant to dimensions, formats measurements using pipe character markers (|), and converts outputs to AutoCAD symbol code syntax (%%d, %%135, %%136).\n" +
-                          " • NT Format: Completes a comprehensive cleanup pass to remove redundant trailing zero indicators on survey distances and strips empty minutes or seconds from bearings.";
-
-        HelpWpfWindow hWin = new HelpWpfWindow(aboutMsg);
+        HelpWpfWindow hWin = new HelpWpfWindow("");
         hWin.Owner = System.Windows.Window.GetWindow(this);
         hWin.Show();
     }
@@ -3609,8 +3569,8 @@ public class HelpWpfWindow : System.Windows.Window
     public HelpWpfWindow(string content)
     {
         this.Title = "TECHNICAL HELP MANUAL - CADASTRE LINES";
-        this.Width = 550;
-        this.Height = 650;
+        this.Width = 600;
+        this.Height = 780;
         this.Background = UITheme.BackgroundBrush;
         this.WindowStartupLocation = WindowStartupLocation.CenterOwner;
         this.ShowInTaskbar = false;
@@ -3619,25 +3579,198 @@ public class HelpWpfWindow : System.Windows.Window
         root.RowDefinitions.Add(new RowDefinition() { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto });
 
-        ScrollViewer sv = new ScrollViewer() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(15) };
-        TextBlock tb = new TextBlock() { 
-            Text = content, 
-            Foreground = Brushes.White, 
-            TextWrapping = TextWrapping.Wrap, 
-            FontFamily = new FontFamily("Segoe UI"), 
-            FontSize = 13,
-            LineHeight = 20
+        ScrollViewer sv = new ScrollViewer() { 
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, 
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Margin = new Thickness(15) 
         };
-        sv.Content = tb;
+        
+        StackPanel sp = new StackPanel();
+
+        // 1. Sleek Header
+        TextBlock tbHeader = new TextBlock() {
+            Text = "CADASTRE TOOLS - TRAVERSE GUIDE",
+            Foreground = Brushes.Cyan,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 16,
+            FontWeight = FontWeights.Bold,
+            Margin = new Thickness(0, 0, 0, 10),
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        sp.Children.Add(tbHeader);
+
+        // 2. Vector Schematic (WPF Canvas drawing)
+        TextBlock tbDiagramTitle = new TextBlock() {
+            Text = "📸 CO-ORDINATE TRAVERSE SCHEMA",
+            FontWeight = FontWeights.Bold,
+            Foreground = Brushes.Yellow,
+            FontSize = 12,
+            Margin = new Thickness(0, 5, 0, 8),
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        sp.Children.Add(tbDiagramTitle);
+        sp.Children.Add(CreateTraverseVisual());
+
+        // 3. Quick Start Card
+        Border cardSteps = UITheme.CreateCard();
+        cardSteps.Padding = new Thickness(12);
+        
+        StackPanel spSteps = new StackPanel();
+        spSteps.Children.Add(new TextBlock() { Text = "⚡ QUICK START WORKFLOW", FontWeight = FontWeights.Bold, Foreground = Brushes.Yellow, FontSize = 12, Margin = new Thickness(0, 0, 0, 8) });
+        
+        void AddStep(string number, string title, string desc)
+        {
+            StackPanel spStep = new StackPanel() { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
+            TextBlock tbNum = new TextBlock() { Text = number, FontWeight = FontWeights.Bold, Foreground = Brushes.Cyan, Width = 25, FontSize = 11.5 };
+            TextBlock tbText = new TextBlock() { TextWrapping = TextWrapping.Wrap, Width = 500, FontFamily = new FontFamily("Segoe UI"), FontSize = 11.5 };
+            
+            System.Windows.Documents.Run runTitle = new System.Windows.Documents.Run(title) { FontWeight = FontWeights.Bold, Foreground = Brushes.White };
+            System.Windows.Documents.Run runDesc = new System.Windows.Documents.Run(desc) { Foreground = Brushes.LightGray };
+            tbText.Inlines.Add(runTitle);
+            tbText.Inlines.Add(runDesc);
+            
+            spStep.Children.Add(tbNum);
+            spStep.Children.Add(tbText);
+            spSteps.Children.Add(spStep);
+        }
+        
+        AddStep("1.", "Set Origin: ", "Press End to enter coordinates manually or PgDn to select a start point on the AutoCAD screen.");
+        AddStep("2.", "Choose Layer: ", "Use hotkeys Q (Subject), W (Adjoining), E (Connections), A (Easement), S/D (Additional) to switch active layers.");
+        AddStep("3.", "Draft Traverse: ", "Type Bearing (DDD.MMSS) & Distance, then press Enter. Inline math (e.g. + and -) is fully supported!");
+        AddStep("4.", "Draft side shot: ", "Press PgUp to open the Side Shot menu to draft radiations/radiating shots without advancing traverse origin.");
+        
+        cardSteps.Child = spSteps;
+        sp.Children.Add(cardSteps);
+
+        // 4. Feature Descriptions Card
+        Border cardFeatures = UITheme.CreateCard();
+        cardFeatures.Padding = new Thickness(12);
+        
+        StackPanel spFeatures = new StackPanel();
+        spFeatures.Children.Add(new TextBlock() { Text = "🛠️ DETAILED FUNCTIONALITY LIST", FontWeight = FontWeights.Bold, Foreground = Brushes.Yellow, FontSize = 12, Margin = new Thickness(0, 0, 0, 8) });
+
+        void AddFeature(string shortcut, string featureTitle, string details)
+        {
+            StackPanel spFeat = new StackPanel() { Margin = new Thickness(0, 4, 0, 4) };
+            
+            StackPanel spFeatHead = new StackPanel() { Orientation = Orientation.Horizontal };
+            if (!string.IsNullOrEmpty(shortcut))
+            {
+                Border keycap = new Border() {
+                    Background = new SolidColorBrush(Color.FromRgb(50, 50, 50)),
+                    BorderBrush = Brushes.Gray,
+                    BorderThickness = new Thickness(1, 1, 1, 2),
+                    CornerRadius = new CornerRadius(3),
+                    Padding = new Thickness(4, 1, 4, 1),
+                    Margin = new Thickness(0, 0, 6, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                keycap.Child = new TextBlock() { Text = shortcut, Foreground = Brushes.Cyan, FontSize = 9, FontWeight = FontWeights.Bold, FontFamily = new FontFamily("Consolas") };
+                spFeatHead.Children.Add(keycap);
+            }
+            
+            spFeatHead.Children.Add(new TextBlock() { Text = featureTitle, FontWeight = FontWeights.Bold, Foreground = Brushes.White, FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center });
+            spFeat.Children.Add(spFeatHead);
+            
+            spFeat.Children.Add(new TextBlock() { Text = details, Foreground = Brushes.LightGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0), FontSize = 11, LineHeight = 15 });
+            
+            spFeatures.Children.Add(spFeat);
+        }
+
+        AddFeature("Arrows", "Bearing Adjustments (+90° / -90° / 180°)", "Press Arrow keys inside the Bearing input box to rotate the current bearing value in increments of 90 degrees (Up/Down) or 180 degrees (Left/Right).");
+        AddFeature("Del", "Geometry Undo Step", "Steps backward by undoing the last-drawn segment and re-adjusting the station point counter. Keeps drawing database clean.");
+        AddFeature("Ins", "Standalone Comment Placement", "Inserts custom text remarks (e.g. COR INF, fence posts, monuments) directly at the current vertex coordinates.");
+        AddFeature("Shift+Z", "Swap Annotation Placement", "Inverts the positions of bearing and distance labels (top-to-bottom and bottom-to-top) on chosen lines.");
+        AddFeature("Shift+X", "Flip Bearings 180°", "Targets selected DBText/MText and reverses the surveyor degrees angle by exactly 180 degrees.");
+        AddFeature("Shift+C", "Manual Line Annotation", "Allows you to select any existing AutoCAD vector line and automatically drafts aligned Bearings & Distances on it.");
+        AddFeature("QLD", "QLD standard Standards Sweep", "Automatically translates layers to QLD statutory ones, obliquing dimension text by 20°, updating fonts to survacad.shx, and converting degrees to %%d syntax.");
+        AddFeature("NT", "NT standard Standards Sweep", "Truncates trailing decimal zeros on distances and strips empty minutes/seconds from bearings to clean up clutter.");
+
+        cardFeatures.Child = spFeatures;
+        sp.Children.Add(cardFeatures);
+
+        sv.Content = sp;
         Grid.SetRow(sv, 0);
         root.Children.Add(sv);
 
-        Button btnClose = new Button() { Content = "CLOSE", Height = 40, Width = 100, Margin = new Thickness(0, 0, 0, 15), Background = UITheme.ActionBlue, Foreground = Brushes.White, FontFamily = new FontFamily("Segoe UI"), FontWeight = FontWeights.Bold, FontSize = 12 };
+        Button btnClose = new Button() { 
+            Content = "CLOSE", 
+            Height = 36, 
+            Width = 100, 
+            Margin = new Thickness(0, 0, 0, 15), 
+            Background = UITheme.ActionBlue, 
+            Foreground = Brushes.White, 
+            FontFamily = new FontFamily("Segoe UI"), 
+            FontWeight = FontWeights.Bold, 
+            FontSize = 12 
+        };
         btnClose.Click += (s, e) => this.Close();
         Grid.SetRow(btnClose, 1);
         root.Children.Add(btnClose);
 
         this.Content = root;
+    }
+
+    private UIElement CreateTraverseVisual()
+    {
+        Canvas canvas = new Canvas() { Width = 550, Height = 200, Background = new SolidColorBrush(Color.FromRgb(20, 20, 20)), Margin = new Thickness(0, 0, 0, 10) };
+        
+        // Draw North reference line (Dashed)
+        System.Windows.Shapes.Line northLine = new System.Windows.Shapes.Line() {
+            X1 = 150, Y1 = 150, X2 = 150, Y2 = 30,
+            Stroke = Brushes.Gray,
+            StrokeThickness = 1,
+            StrokeDashArray = new System.Windows.Media.DoubleCollection(new double[] { 4, 4 })
+        };
+        canvas.Children.Add(northLine);
+
+        TextBlock tbNorth = new TextBlock() { Text = "N (0°00'00\")", Foreground = Brushes.Gray, FontSize = 10, FontWeight = FontWeights.Bold };
+        Canvas.SetLeft(tbNorth, 110); Canvas.SetTop(tbNorth, 12);
+        canvas.Children.Add(tbNorth);
+
+        // Draw Traverse Line (Glowing Cyan)
+        System.Windows.Shapes.Line travLine = new System.Windows.Shapes.Line() {
+            X1 = 150, Y1 = 150, X2 = 300, Y2 = 63,
+            Stroke = Brushes.Cyan,
+            StrokeThickness = 2.5
+        };
+        canvas.Children.Add(travLine);
+
+        // Draw Point 1 (Green Dot)
+        System.Windows.Shapes.Ellipse dot1 = new System.Windows.Shapes.Ellipse() { Width = 8, Height = 8, Fill = Brushes.Lime, Margin = new Thickness(-4) };
+        Canvas.SetLeft(dot1, 150); Canvas.SetTop(dot1, 150);
+        canvas.Children.Add(dot1);
+
+        TextBlock tbPt1 = new TextBlock() { Text = "1 (Origin)", Foreground = Brushes.Lime, FontSize = 10, FontWeight = FontWeights.Bold };
+        Canvas.SetLeft(tbPt1, 95); Canvas.SetTop(tbPt1, 152);
+        canvas.Children.Add(tbPt1);
+
+        // Draw Point 2 (Green Dot)
+        System.Windows.Shapes.Ellipse dot2 = new System.Windows.Shapes.Ellipse() { Width = 8, Height = 8, Fill = Brushes.Lime, Margin = new Thickness(-4) };
+        Canvas.SetLeft(dot2, 300); Canvas.SetTop(dot2, 63);
+        canvas.Children.Add(dot2);
+
+        TextBlock tbPt2 = new TextBlock() { Text = "2 (Next Stn)", Foreground = Brushes.Lime, FontSize = 10, FontWeight = FontWeights.Bold };
+        Canvas.SetLeft(tbPt2, 310); Canvas.SetTop(tbPt2, 58);
+        canvas.Children.Add(tbPt2);
+
+        // Add Labels
+        TextBlock tbBrg = new TextBlock() { Text = "Bearing: 120°30'00\" (Type 120.3000)", Foreground = Brushes.Yellow, FontSize = 10.5, FontWeight = FontWeights.SemiBold };
+        Canvas.SetLeft(tbBrg, 205); Canvas.SetTop(tbBrg, 115);
+        canvas.Children.Add(tbBrg);
+
+        TextBlock tbDist = new TextBlock() { Text = "Distance: 45.500m (Type 45.5)", Foreground = Brushes.White, FontSize = 10.5, FontWeight = FontWeights.SemiBold };
+        Canvas.SetLeft(tbDist, 200); Canvas.SetTop(tbDist, 40);
+        canvas.Children.Add(tbDist);
+
+        Border b = new Border() {
+            BorderBrush = Brushes.Gray,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Child = canvas,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        return b;
     }
 }
 #endregion

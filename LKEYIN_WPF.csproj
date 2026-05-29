@@ -62,6 +62,13 @@
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
 	</ItemGroup>
 
+	<!-- Copy Help Diagram Image to Output Folder -->
+	<ItemGroup>
+		<None Update="help_diagram.png">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
 	<!-- Target to increment the suffix after a successful build -->
 	<Target Name="IncrementSuffix" AfterTargets="Build">
 		<PropertyGroup>
