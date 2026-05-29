@@ -2884,35 +2884,46 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
         try
         {
-            while (true)
+            PromptSelectionOptions pso = new PromptSelectionOptions();
+            pso.MessageForAdding = "\nSelect boundary lines to swap text (or press Enter/ESC to exit): ";
+            
+            TypedValue[] filter = new TypedValue[] { new TypedValue((int)DxfCode.Start, "LINE") };
+            PromptSelectionResult psr = ed.GetSelection(pso, new SelectionFilter(filter));
+
+            if (psr.Status == PromptStatus.OK && psr.Value != null)
             {
-                PromptEntityOptions peo = new PromptEntityOptions("\nSelect boundary line to swap text (or press ESC to exit): ");
-                peo.SetRejectMessage("\nOnly lines can be selected.");
-                peo.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Line), false);
-                PromptEntityResult per = ed.GetEntity(peo);
-
-                if (per.Status == PromptStatus.Cancel) break;
-                if (per.Status != PromptStatus.OK) continue;
-
                 using (DocumentLock loc = _doc.LockDocument())
                 using (Transaction tr = _doc.TransactionManager.StartTransaction())
                 {
-                    Autodesk.AutoCAD.DatabaseServices.Line selLine = (Autodesk.AutoCAD.DatabaseServices.Line)tr.GetObject(per.ObjectId, OpenMode.ForRead);
                     BlockTable bt = (BlockTable)tr.GetObject(_doc.Database.BlockTableId, OpenMode.ForRead);
                     BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
 
                     string[] bearingLayers = { CadConstants.BDY_BEARING, CadConstants.CONNECTION_BEAR, "BEAR" };
                     string[] distanceLayers = { CadConstants.BDY_DISTANCE, CadConstants.CONNECTION_DIST, "DIM" };
 
-                    Entity bearingText = null;
-                    Entity distText = null;
                     double tolerance = GetModelSize(5.0);
-                    Point3d mid = selLine.StartPoint + (selLine.EndPoint - selLine.StartPoint) / 2.0;
 
+                    // Batch optimization: cache all DBText/MText candidates from model space
+                    List<Entity> candidateTexts = new List<Entity>();
                     foreach (ObjectId id in btr)
                     {
                         Entity ent = (Entity)tr.GetObject(id, OpenMode.ForRead);
                         if (ent is DBText || ent is MText)
+                        {
+                            candidateTexts.Add(ent);
+                        }
+                    }
+
+                    int swapCount = 0;
+                    foreach (ObjectId lineId in psr.Value.GetObjectIds())
+                    {
+                        Autodesk.AutoCAD.DatabaseServices.Line selLine = (Autodesk.AutoCAD.DatabaseServices.Line)tr.GetObject(lineId, OpenMode.ForRead);
+                        Point3d mid = selLine.StartPoint + (selLine.EndPoint - selLine.StartPoint) / 2.0;
+
+                        Entity bearingText = null;
+                        Entity distText = null;
+
+                        foreach (Entity ent in candidateTexts)
                         {
                             Point3d tPos = (ent is DBText dbt) ? ((dbt.Justify == AttachmentPoint.BaseLeft) ? dbt.Position : dbt.AlignmentPoint) : ((MText)ent).Location;
                             if (tPos.DistanceTo(mid) < tolerance)
@@ -2921,34 +2932,35 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                                 else if (distanceLayers.Contains(ent.Layer)) distText = ent;
                             }
                         }
+
+                        if (bearingText != null && distText != null)
+                        {
+                            bearingText.UpgradeOpen();
+                            distText.UpgradeOpen();
+
+                            Point3d brgCoord = (bearingText is DBText dbtB) ? dbtB.AlignmentPoint : ((MText)bearingText).Location;
+                            Point3d distCoord = (distText is DBText dbtD) ? dbtD.AlignmentPoint : ((MText)distText).Location;
+                            AttachmentPoint brgJust = (bearingText is DBText dB) ? dB.Justify : ((MText)bearingText).Attachment;
+
+                            // Condition A: Standard -> Swapped
+                            if (brgJust == AttachmentPoint.BottomCenter)
+                            {
+                                UpdateTextJustAndPos(bearingText, AttachmentPoint.TopCenter, distCoord);
+                                UpdateTextJustAndPos(distText, AttachmentPoint.BottomCenter, brgCoord);
+                            }
+                            // Condition B: Swapped -> Standard
+                            else
+                            {
+                                UpdateTextJustAndPos(bearingText, AttachmentPoint.BottomCenter, distCoord);
+                                UpdateTextJustAndPos(distText, AttachmentPoint.TopCenter, brgCoord);
+                            }
+                            swapCount++;
+                        }
                     }
 
-                    if (bearingText != null && distText != null)
-                    {
-                        bearingText.UpgradeOpen();
-                        distText.UpgradeOpen();
-
-                        Point3d brgCoord = (bearingText is DBText dbtB) ? dbtB.AlignmentPoint : ((MText)bearingText).Location;
-                        Point3d distCoord = (distText is DBText dbtD) ? dbtD.AlignmentPoint : ((MText)distText).Location;
-                        AttachmentPoint brgJust = (bearingText is DBText dB) ? dB.Justify : ((MText)bearingText).Attachment;
-                        AttachmentPoint distJust = (distText is DBText dD) ? dD.Justify : ((MText)distText).Attachment;
-
-                        // Condition A: Standard -> Swapped
-                        if (brgJust == AttachmentPoint.BottomCenter)
-                        {
-                            UpdateTextJustAndPos(bearingText, AttachmentPoint.TopCenter, distCoord);
-                            UpdateTextJustAndPos(distText, AttachmentPoint.BottomCenter, brgCoord);
-                        }
-                        // Condition B: Swapped -> Standard
-                        else
-                        {
-                            UpdateTextJustAndPos(bearingText, AttachmentPoint.BottomCenter, distCoord);
-                            UpdateTextJustAndPos(distText, AttachmentPoint.TopCenter, brgCoord);
-                        }
-
-                        tr.Commit();
-                        ed.UpdateScreen();
-                    }
+                    tr.Commit();
+                    ed.UpdateScreen();
+                    ed.WriteMessage($"\n[Swap Text] Swapped bearing/distance labels for {swapCount} lines.");
                 }
             }
         }
@@ -2979,61 +2991,65 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         if (!ValidateDocument()) return;
         var ed = _doc.Editor;
 
+        this.Visibility = System.Windows.Visibility.Collapsed;
+        System.Windows.Forms.Application.DoEvents();
+
         try
         {
-            while (true)
+            _doc.Window.Focus();
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+        }
+        catch { }
+
+        try
+        {
+            PromptSelectionOptions pso = new PromptSelectionOptions();
+            pso.MessageForAdding = "\nSelect bearing TEXT objects to flip 180\u00B0 (or press Enter/ESC to exit): ";
+            
+            TypedValue[] filter = new TypedValue[] {
+                new TypedValue((int)DxfCode.Operator, "<OR"),
+                new TypedValue((int)DxfCode.Start, "TEXT"),
+                new TypedValue((int)DxfCode.Start, "MTEXT"),
+                new TypedValue((int)DxfCode.Operator, "OR>")
+            };
+            PromptSelectionResult psr = ed.GetSelection(pso, new SelectionFilter(filter));
+
+            if (psr.Status == PromptStatus.OK && psr.Value != null)
             {
-                this.Visibility = System.Windows.Visibility.Collapsed;
-                System.Windows.Forms.Application.DoEvents();
-
-                try
-                {
-                    _doc.Window.Focus();
-                    Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
-                }
-                catch { }
-
-                PromptEntityOptions peo = new PromptEntityOptions("\nSelect bearing TEXT to flip 180\u00B0 (or press ESC to exit): ");
-                peo.SetRejectMessage("\nOnly text objects can be selected.");
-                peo.AddAllowedClass(typeof(DBText), false);
-                peo.AddAllowedClass(typeof(MText), false);
-                PromptEntityResult per = ed.GetEntity(peo);
-
-                if (per.Status == PromptStatus.Cancel) break;
-                if (per.Status != PromptStatus.OK) continue;
-
                 using (DocumentLock loc = _doc.LockDocument())
                 using (Transaction tr = _doc.TransactionManager.StartTransaction())
                 {
-                    Entity ent = (Entity)tr.GetObject(per.ObjectId, OpenMode.ForWrite);
-
-                    // Strict Target Validation
-                    bool isBearingLayer = (ent.Layer == CadConstants.BDY_BEARING || ent.Layer == CadConstants.CONNECTION_BEAR || string.Equals(ent.Layer, "BEAR", StringComparison.OrdinalIgnoreCase));
-                    if (!isBearingLayer)
+                    int flipCount = 0;
+                    foreach (ObjectId textId in psr.Value.GetObjectIds())
                     {
-                        ed.WriteMessage("\n[Error] Please select TEXT on a Bearing layer.");
-                        continue;
-                    }
+                        Entity ent = (Entity)tr.GetObject(textId, OpenMode.ForWrite);
 
-                    string rawTxt = (ent is DBText dbt) ? dbt.TextString : ((MText)ent).Contents;
+                        // Strict Target Validation
+                        bool isBearingLayer = (ent.Layer == CadConstants.BDY_BEARING || ent.Layer == CadConstants.CONNECTION_BEAR || string.Equals(ent.Layer, "BEAR", StringComparison.OrdinalIgnoreCase));
+                        if (!isBearingLayer) continue;
 
-                    // Math Logic (Degree-Only Modification)
-                    var match = System.Text.RegularExpressions.Regex.Match(rawTxt, @"^(\d+)");
-                    if (match.Success)
-                    {
-                        string degStr = match.Groups[1].Value;
-                        if (int.TryParse(degStr, out int oldDeg))
+                        string rawTxt = (ent is DBText dbt) ? dbt.TextString : ((MText)ent).Contents;
+
+                        // Math Logic (Degree-Only Modification)
+                        var match = System.Text.RegularExpressions.Regex.Match(rawTxt, @"^(\d+)");
+                        if (match.Success)
                         {
-                            int newDeg = (oldDeg + 180) % 360;
-                            string newTxt = newDeg.ToString() + rawTxt.Substring(degStr.Length);
+                            string degStr = match.Groups[1].Value;
+                            if (int.TryParse(degStr, out int oldDeg))
+                            {
+                                int newDeg = (oldDeg + 180) % 360;
+                                string newTxt = newDeg.ToString() + rawTxt.Substring(degStr.Length);
 
-                            if (ent is DBText d) d.TextString = newTxt;
-                            else if (ent is MText m) m.Contents = newTxt;
-
-                            tr.Commit();
-                            ed.UpdateScreen();
+                                if (ent is DBText d) d.TextString = newTxt;
+                                else if (ent is MText m) m.Contents = newTxt;
+                                flipCount++;
+                            }
                         }
                     }
+
+                    tr.Commit();
+                    ed.UpdateScreen();
+                    ed.WriteMessage($"\n[Flip 180] Flipped {flipCount} bearing text labels.");
                 }
             }
         }
@@ -3050,56 +3066,64 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         if (!ValidateDocument()) return;
         var ed = _doc.Editor;
 
+        this.Visibility = System.Windows.Visibility.Collapsed;
+        System.Windows.Forms.Application.DoEvents();
+
         try
         {
-            while (true)
+            _doc.Window.Focus();
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+        }
+        catch { }
+
+        try
+        {
+            PromptSelectionOptions pso = new PromptSelectionOptions();
+            pso.MessageForAdding = "\nSelect lines to annotate (or press Enter/ESC to exit): ";
+            
+            TypedValue[] filter = new TypedValue[] { new TypedValue((int)DxfCode.Start, "LINE") };
+            PromptSelectionResult psr = ed.GetSelection(pso, new SelectionFilter(filter));
+
+            if (psr.Status == PromptStatus.OK && psr.Value != null)
             {
-                this.Visibility = System.Windows.Visibility.Collapsed;
-                System.Windows.Forms.Application.DoEvents();
-
-                try
-                {
-                    _doc.Window.Focus();
-                    Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
-                }
-                catch { }
-
-                PromptEntityOptions peo = new PromptEntityOptions("\nSelect line to annotate (or press ESC to exit): ");
-                peo.SetRejectMessage("\nOnly lines can be selected.");
-                peo.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Line), false);
-                PromptEntityResult per = ed.GetEntity(peo);
-
-                if (per.Status == PromptStatus.Cancel) break;
-                if (per.Status != PromptStatus.OK) continue;
-
                 using (DocumentLock loc = _doc.LockDocument())
                 using (Transaction tr = _doc.TransactionManager.StartTransaction())
                 {
-                    Autodesk.AutoCAD.DatabaseServices.Line selLine = (Autodesk.AutoCAD.DatabaseServices.Line)tr.GetObject(per.ObjectId, OpenMode.ForRead);
-
-                    double dist = selLine.Length;
-                    double cadAngleRad = selLine.Angle;
-
-                    double angleDeg = 90.0 - (cadAngleRad * 180.0 / Math.PI);
-                    if (angleDeg < 0) angleDeg += 360.0;
-
-                    double rawBrg = double.Parse(CadMath.DegreesToDmsString(angleDeg));
-
                     BlockTable bt = (BlockTable)tr.GetObject(_doc.Database.BlockTableId, OpenMode.ForRead);
                     BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
+                    List<ObjectId> batchCreated = new List<ObjectId>();
                     string originalLayer = _currentLayer;
-                    _currentLayer = selLine.Layer;
 
-                    List<ObjectId> created = CreateAnnotatedText(btr, tr, selLine, rawBrg, dist, cadAngleRad);
-                    if (_undoStack.Count > 0) _undoStack[_undoStack.Count - 1].AddRange(created);
-                    else _undoStack.Add(created);
+                    foreach (ObjectId lineId in psr.Value.GetObjectIds())
+                    {
+                        Autodesk.AutoCAD.DatabaseServices.Line selLine = (Autodesk.AutoCAD.DatabaseServices.Line)tr.GetObject(lineId, OpenMode.ForRead);
+
+                        double dist = selLine.Length;
+                        double cadAngleRad = selLine.Angle;
+
+                        double angleDeg = 90.0 - (cadAngleRad * 180.0 / Math.PI);
+                        if (angleDeg < 0) angleDeg += 360.0;
+
+                        double rawBrg = double.Parse(CadMath.DegreesToDmsString(angleDeg));
+
+                        _currentLayer = selLine.Layer;
+
+                        List<ObjectId> created = CreateAnnotatedText(btr, tr, selLine, rawBrg, dist, cadAngleRad);
+                        batchCreated.AddRange(created);
+                    }
 
                     _currentLayer = originalLayer;
 
+                    if (batchCreated.Count > 0)
+                    {
+                        if (_undoStack.Count > 0) _undoStack[_undoStack.Count - 1].AddRange(batchCreated);
+                        else _undoStack.Add(batchCreated);
+                    }
+
                     tr.Commit();
                     ed.UpdateScreen();
-                    ed.WriteMessage("\n[Annotate] Line annotated.");
+                    ed.WriteMessage($"\n[Annotate] Annotated {psr.Value.Count} lines.");
                 }
             }
         }
