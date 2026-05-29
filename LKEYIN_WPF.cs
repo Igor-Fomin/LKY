@@ -552,8 +552,8 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
     private double _plotScale { get => CurrentState.PlotScale; set => CurrentState.PlotScale = value; }
     private double _prevPlotScale { get => CurrentState.PrevPlotScale; set => CurrentState.PrevPlotScale = value; }
     private string _currentLayer { get => CurrentState.CurrentLayer; set => CurrentState.CurrentLayer = value; }
-    private bool _feetMode { get => CurrentState.FeetMode; set => CurrentState.FeetMode = value; }
-    private bool _distanceIsConverted { get => CurrentState.DistanceIsConverted; set => CurrentState.DistanceIsConverted = value; }
+    internal bool _feetMode { get => CurrentState.FeetMode; set => CurrentState.FeetMode = value; }
+    internal bool _distanceIsConverted { get => CurrentState.DistanceIsConverted; set => CurrentState.DistanceIsConverted = value; }
 
     private Document _doc;
     private AppSettings _config;
@@ -2458,11 +2458,14 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
             if (!ValidateDocument()) return;
             ExecuteUiAction(() => {
                 string finalDist = dist;
-                if (_feetMode && double.TryParse(dist, out double feetVal))
+                if (_feetMode && double.TryParse(dist, out double mVal))
                 {
-                    double meterVal = feetVal * 0.3048;
-                    finalDist = meterVal.ToString("0.000");
-                    lblDistanceTrace.Text = $"Side Shot: {feetVal:F3} ft = {meterVal:F3} m";
+                    double ftVal = mVal / 0.3048;
+                    lblDistanceTrace.Text = $"Side Shot: {ftVal:F3} ft = {mVal:F3} m";
+                }
+                else
+                {
+                    lblDistanceTrace.Text = $"Side Shot: {dist} m";
                 }
 
                 using (DocumentLock loc = _doc.LockDocument())
@@ -3434,51 +3437,121 @@ public class SideShotWpfWindow : System.Windows.Window
 {
     private TextBox txtBrg = null!, txtDist = null!, txtComm = null!;
     private TextBlock lblBrgTrace = null!, lblDistTrace = null!;
+    private Button btnFeet = null!;
     private Action<string, string, string> _onAddLine;
     private CadastreWpfWindow _parent;
- 
+
     public SideShotWpfWindow(CadastreWpfWindow parent, string initialBearing, Action<string, string, string> onAddLine)
     {
         _parent = parent;
         _onAddLine = onAddLine;
-        this.Title = "SIDE SHOT"; this.Width = 450; this.Height = 550;
+        this.Title = "SIDE SHOT / RADIATION"; 
+        this.Width = 460; 
+        this.Height = 480;
         this.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        this.Background = UITheme.BackgroundBrush; this.ResizeMode = ResizeMode.NoResize;
+        this.Background = UITheme.BackgroundBrush; 
+        this.ResizeMode = ResizeMode.NoResize;
 
         this.PreviewKeyDown += (s, e) => {
             if (e.Key == Key.Escape) { this.Close(); e.Handled = true; }
         };
 
-        Grid root = new Grid(); root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto }); root.RowDefinitions.Add(new RowDefinition() { Height = new GridLength(1, GridUnitType.Star) }); root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto });
+        Grid root = new Grid(); 
+        root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto }); // Title
+        root.RowDefinitions.Add(new RowDefinition() { Height = new GridLength(1, GridUnitType.Star) }); // Main Content Card
+        root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto }); // Bottom Button
+
         Border header = new Border() { Background = UITheme.CardBrush, Padding = new Thickness(10) };
-        header.Child = new TextBlock() { Text = "SIDE SHOT", FontSize = 16, FontWeight = FontWeights.Bold, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center };
+        header.Child = new TextBlock() { Text = "DRAFT SIDE SHOT (RADIATION)", FontSize = 14, FontWeight = FontWeights.Bold, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center };
         Grid.SetRow(header, 0); root.Children.Add(header);
 
-        Border card = UITheme.CreateCard(); card.Margin = new Thickness(12); StackPanel pnl = new StackPanel();
+        Border card = UITheme.CreateCard(); 
+        card.Margin = new Thickness(12); 
+        
+        StackPanel pnl = new StackPanel();
 
-        pnl.Children.Add(UITheme.CreateLabel("BEARING"));
-        txtBrg = UITheme.CreateInputBox(); txtBrg.PreviewKeyDown += Input_PreviewKeyDown;
-        pnl.Children.Add(txtBrg);
-        lblBrgTrace = new TextBlock() { FontSize = 13, Foreground = Brushes.LightGray, FontStyle = FontStyles.Italic, FontWeight = FontWeights.SemiBold, Margin = new Thickness(5, 2, 0, 8) };
+        // --- Bearing Row Layout ---
+        pnl.Children.Add(UITheme.CreateLabel("BEARING (DDD.MMSS)"));
+        
+        Grid gBrgRow = new Grid();
+        gBrgRow.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
+        gBrgRow.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(136) });
+
+        txtBrg = UITheme.CreateInputBox(); 
+        txtBrg.PreviewKeyDown += Input_PreviewKeyDown;
+        Grid.SetColumn(txtBrg, 0);
+        gBrgRow.Children.Add(txtBrg);
+
+        // Rotation Buttons Grid (identical to main panel)
+        Grid gBrgBtns = new Grid();
+        for (int i = 0; i < 4; i++) gBrgBtns.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(34) });
+
+        Button CreateBrgBtn(object content, string tip, double delta) {
+            Button b = new Button() { Content = content, Width = 32, Height = 32, Margin = new Thickness(2, 0, 0, 0), Background = UITheme.ActionBlue, Foreground = Brushes.White, ToolTip = tip };
+            b.Click += (s, e) => { ModifyBearing(delta); txtBrg.Focus(); txtBrg.SelectAll(); };
+            return b;
+        }
+
+        Button bP90 = CreateBrgBtn(UITheme.CreateShortcutContent("UP", "+90"), "Rotate bearing +90°", 90);
+        Button bM90 = CreateBrgBtn(UITheme.CreateShortcutContent("DOWN", "-90"), "Rotate bearing -90°", -90);
+        Button bP180 = CreateBrgBtn(UITheme.CreateShortcutContent("RIGHT", "+180"), "Rotate bearing +180°", 180);
+        Button bM180 = CreateBrgBtn(UITheme.CreateShortcutContent("LEFT", "-180"), "Rotate bearing -180°", -180);
+
+        Grid.SetColumn(bP90, 0); Grid.SetColumn(bM90, 1); Grid.SetColumn(bP180, 2); Grid.SetColumn(bM180, 3);
+        gBrgBtns.Children.Add(bP90); gBrgBtns.Children.Add(bM90); gBrgBtns.Children.Add(bP180); gBrgBtns.Children.Add(bM180);
+        
+        Grid.SetColumn(gBrgBtns, 1);
+        gBrgRow.Children.Add(gBrgBtns);
+        pnl.Children.Add(gBrgRow);
+
+        lblBrgTrace = new TextBlock() { FontSize = 12, Foreground = Brushes.LightGray, FontStyle = FontStyles.Italic, FontWeight = FontWeights.SemiBold, Margin = new Thickness(4, 2, 0, 8) };
         pnl.Children.Add(lblBrgTrace);
 
-        pnl.Children.Add(UITheme.CreateLabel("DISTANCE"));
-        txtDist = UITheme.CreateInputBox(); txtDist.PreviewKeyDown += Input_PreviewKeyDown;
-        txtDist.GotFocus += (s, e) => { txtDist.BorderBrush = Brushes.WhiteSmoke; txtDist.BorderThickness = new Thickness(2); };
+        // --- Distance Row Layout ---
+        pnl.Children.Add(UITheme.CreateLabel("DISTANCE (m)"));
+        
+        Grid gDistRow = new Grid();
+        gDistRow.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
+        gDistRow.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(42) });
+
+        txtDist = UITheme.CreateInputBox(); 
+        txtDist.PreviewKeyDown += Input_PreviewKeyDown;
+        txtDist.GotFocus += (s, e) => { txtDist.BorderBrush = Brushes.WhiteSmoke; txtDist.BorderThickness = new Thickness(1.5); };
         txtDist.LostFocus += (s, e) => { txtDist.BorderBrush = Brushes.Gray; txtDist.BorderThickness = new Thickness(1); };
-        pnl.Children.Add(txtDist);
-        lblDistTrace = new TextBlock() { FontSize = 13, Foreground = Brushes.LightGray, FontStyle = FontStyles.Italic, FontWeight = FontWeights.SemiBold, Margin = new Thickness(5, 2, 0, 8) };
+        txtDist.TextChanged += (s, e) => { _parent._distanceIsConverted = false; };
+        Grid.SetColumn(txtDist, 0);
+        gDistRow.Children.Add(txtDist);
+
+        btnFeet = new Button() {
+            Width = 38,
+            Height = 32,
+            Margin = new Thickness(4, 0, 0, 0),
+            Background = new SolidColorBrush(Color.FromRgb(60, 60, 60)),
+            Foreground = Brushes.White,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 10.5,
+            ToolTip = "Toggle Input Unit: Meters (m) / Feet (ft)"
+        };
+        btnFeet.Click += (s, e) => ToggleUnits();
+        Grid.SetColumn(btnFeet, 1);
+        gDistRow.Children.Add(btnFeet);
+        pnl.Children.Add(gDistRow);
+
+        lblDistTrace = new TextBlock() { FontSize = 12, Foreground = Brushes.LightGray, FontStyle = FontStyles.Italic, FontWeight = FontWeights.SemiBold, Margin = new Thickness(4, 2, 0, 8) };
         pnl.Children.Add(lblDistTrace);
 
-        pnl.Children.Add(UITheme.CreateLabel("COMMENT")); 
+        // --- Comment Row Layout ---
+        pnl.Children.Add(UITheme.CreateLabel("COMMENT / STATION REMARK")); 
         txtComm = UITheme.CreateInputBox();
         txtComm.PreviewKeyDown += Input_PreviewKeyDown;
         pnl.Children.Add(txtComm);
         
         card.Child = pnl; Grid.SetRow(card, 1); root.Children.Add(card);
 
+        // --- Bottom Exit Button ---
         Grid btns = new Grid() { Margin = new Thickness(12, 0, 12, 12) };
-        Button btnExit = new Button() { Content = "EXIT", Height = 40, Background = UITheme.ActionBlue, Foreground = Brushes.White, FontFamily = new FontFamily("Segoe UI"), FontWeight = FontWeights.Bold, FontSize = 12 };
+        Button btnExit = new Button() { Content = "CLOSE SIDE SHOT MENU", Height = 36, Background = UITheme.ActionBlue, Foreground = Brushes.White, FontFamily = new FontFamily("Segoe UI"), FontWeight = FontWeights.Bold, FontSize = 11 };
         btnExit.Click += (s, e) => { this.Close(); };
         btns.Children.Add(btnExit); Grid.SetRow(btns, 2); root.Children.Add(btns);
         this.Content = root; 
@@ -3486,14 +3559,66 @@ public class SideShotWpfWindow : System.Windows.Window
         this.Loaded += (s, e) => 
         {
             txtBrg.Text = initialBearing;
+            SyncUnitButtonUI();
             txtBrg.Focus();
             txtBrg.SelectAll();
         };
     }
 
+    private void ModifyBearing(double deltaDegrees)
+    {
+        double currentVal = 0;
+        if (CadMath.TryParseBearing(txtBrg.Text, out currentVal))
+        {
+            double decDeg = CadMath.ParseDmsToDegrees(currentVal);
+            decDeg += deltaDegrees;
+            txtBrg.Text = CadMath.DegreesToDmsString(decDeg);
+            
+            lblBrgTrace.Text = $"Adjusted by {deltaDegrees:+#;-#;0}° = {CadMath.FormatAsSurveyor(double.Parse(txtBrg.Text))}";
+            txtBrg.Focus();
+            txtBrg.SelectAll();
+        }
+    }
+
+    private void ToggleUnits()
+    {
+        _parent._feetMode = !_parent._feetMode;
+        SyncUnitButtonUI();
+        txtDist.Focus();
+        txtDist.SelectAll();
+    }
+
+    private void SyncUnitButtonUI()
+    {
+        if (_parent._feetMode)
+        {
+            btnFeet.Background = new SolidColorBrush(Color.FromRgb(243, 156, 18)); // Vibrant survey orange
+            btnFeet.Foreground = Brushes.Black;
+            btnFeet.Content = "ft";
+            btnFeet.FontWeight = FontWeights.Bold;
+            lblDistTrace.Text = "[UNIT ACTIVE] Input distances in FEET (will convert to METERS).";
+        }
+        else
+        {
+            btnFeet.Background = new SolidColorBrush(Color.FromRgb(60, 60, 60));
+            btnFeet.Foreground = Brushes.White;
+            btnFeet.Content = "m";
+            btnFeet.FontWeight = FontWeights.SemiBold;
+            lblDistTrace.Text = "[UNIT ACTIVE] Input distances in METERS.";
+        }
+    }
+
     private void Input_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         TextBox tb = (TextBox)sender;
+        if (tb == txtBrg)
+        {
+            if (e.Key == Key.Up) { ModifyBearing(90); e.Handled = true; }
+            if (e.Key == Key.Down) { ModifyBearing(-90); e.Handled = true; }
+            if (e.Key == Key.Right) { ModifyBearing(180); e.Handled = true; }
+            if (e.Key == Key.Left) { ModifyBearing(-180); e.Handled = true; }
+        }
+
         if (e.Key == Key.Enter)
         {
             e.Handled = true;
@@ -3507,7 +3632,20 @@ public class SideShotWpfWindow : System.Windows.Window
                 {
                     tb.Text = result;
                     if (tb == txtBrg) lblBrgTrace.Text = $"{oldVal} = {result} ({CadMath.FormatAsSurveyor(double.Parse(result))})";
-                    else if (tb == txtDist) lblDistTrace.Text = $"{oldVal} = {result}";
+                    else if (tb == txtDist)
+                    {
+                        if (_parent._feetMode && !_parent._distanceIsConverted && double.TryParse(result, out double ftVal))
+                        {
+                            double mVal = ftVal * 0.3048;
+                            tb.Text = mVal.ToString("0.000");
+                            _parent._distanceIsConverted = true;
+                            lblDistTrace.Text = $"{oldVal} = {ftVal:F3} ft = {mVal:F3} m";
+                        }
+                        else
+                        {
+                            lblDistTrace.Text = $"{oldVal} = {result}";
+                        }
+                    }
                     
                     tb.Foreground = Brushes.White; tb.FontWeight = FontWeights.Bold;
                     var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -3532,13 +3670,27 @@ public class SideShotWpfWindow : System.Windows.Window
             }
             else if (tb == txtDist)
             {
+                if (_parent._feetMode && !_parent._distanceIsConverted && double.TryParse(tb.Text, out double ftVal))
+                {
+                    double mVal = ftVal * 0.3048;
+                    tb.Text = mVal.ToString("0.000");
+                    _parent._distanceIsConverted = true;
+                    lblDistTrace.Text = $"{ftVal:F3} ft = {mVal:F3} m";
+                }
                 txtComm.Focus(); txtComm.SelectAll();
             }
             else if (tb == txtComm) 
             {
                 if (!string.IsNullOrWhiteSpace(txtBrg.Text) && !string.IsNullOrWhiteSpace(txtDist.Text))
                 {
-                    _onAddLine?.Invoke(txtBrg.Text, txtDist.Text, txtComm.Text);
+                    string finalDist = txtDist.Text;
+                    if (_parent._feetMode && !_parent._distanceIsConverted && double.TryParse(txtDist.Text, out double ftVal))
+                    {
+                        double mVal = ftVal * 0.3048;
+                        finalDist = mVal.ToString("0.000");
+                        _parent._distanceIsConverted = true;
+                    }
+                    _onAddLine?.Invoke(txtBrg.Text, finalDist, txtComm.Text);
                     lblBrgTrace.Text = ""; lblDistTrace.Text = "";
                     txtBrg.Focus(); txtBrg.SelectAll();
                     txtDist.SelectAll();
