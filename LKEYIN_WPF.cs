@@ -481,22 +481,6 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         { Key.D, new LayerDef { Name = "ADDITIONAL_2", Color = 3, Linetype = "Continuous", LinetypeScale = 1.0 } }
     };
 
-    private Document _doc;
-    private Point3d _currentPoint;
-    private Point3d _lastCreatedVertex;
-    private bool _hasStartPoint = false;
-    private Stack<List<ObjectId>> _undoStack = new Stack<List<ObjectId>>();
-    private List<Point3d> _traversePath = new List<Point3d>();
-    private AppSettings _config;
-    private string _currentLayer = "BOUNDARY_SUBJECT";
-    private bool _isBusy = false;
-    private bool _isSyncingScale = false;
-    private bool _feetMode = false;
-    private bool _distanceIsConverted = false;
-    private double _plotScale = 1000.0;
-    private double _prevPlotScale;
-    private double GetModelSize(double paperSize) => paperSize * (_plotScale / 1000.0);
-
     private struct TraverseSegment
     {
         public int Index;
@@ -505,7 +489,78 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         public string Layer;
         public Point3d EndPoint;
     }
-    private List<TraverseSegment> _segmentHistory = new List<TraverseSegment>();
+
+    private class DwgState
+    {
+        public Point3d CurrentPoint { get; set; }
+        public Point3d LastCreatedVertex { get; set; }
+        public bool HasStartPoint { get; set; } = false;
+        public Stack<List<ObjectId>> UndoStack { get; set; } = new Stack<List<ObjectId>>();
+        public List<Point3d> TraversePath { get; set; } = new List<Point3d>();
+        public List<TraverseSegment> SegmentHistory { get; set; } = new List<TraverseSegment>();
+        public double PlotScale { get; set; } = 1000.0;
+        public double PrevPlotScale { get; set; } = 1000.0;
+        public string CurrentLayer { get; set; } = "BOUNDARY_SUBJECT";
+        public bool FeetMode { get; set; } = false;
+        public bool DistanceIsConverted { get; set; } = false;
+    }
+
+    private readonly Dictionary<Document, DwgState> _states = new Dictionary<Document, DwgState>();
+
+    private DwgState GetOrCreateState(Document doc)
+    {
+        if (!_states.TryGetValue(doc, out var state))
+        {
+            state = new DwgState();
+            
+            // Auto-detect annotative scale for the new drawing
+            try
+            {
+                Database db = doc.Database;
+                AnnotationScale scale = db.Cannoscale;
+                double factor = (scale.DrawingUnits / scale.PaperUnits) * 1000.0;
+                state.PlotScale = (factor <= 0 || double.IsNaN(factor) || double.IsInfinity(factor)) ? 1000.0 : factor;
+                state.PrevPlotScale = state.PlotScale;
+            }
+            catch
+            {
+                state.PlotScale = 1000.0;
+                state.PrevPlotScale = 1000.0;
+            }
+            _states[doc] = state;
+        }
+        return state;
+    }
+
+    private DwgState CurrentState
+    {
+        get
+        {
+            var doc = AcApp.DocumentManager.MdiActiveDocument;
+            if (doc == null) return new DwgState();
+            return GetOrCreateState(doc);
+        }
+    }
+
+    // Forwarding properties that seamlessly link original state accesses to CurrentState
+    private Point3d _currentPoint { get => CurrentState.CurrentPoint; set => CurrentState.CurrentPoint = value; }
+    private Point3d _lastCreatedVertex { get => CurrentState.LastCreatedVertex; set => CurrentState.LastCreatedVertex = value; }
+    private bool _hasStartPoint { get => CurrentState.HasStartPoint; set => CurrentState.HasStartPoint = value; }
+    private Stack<List<ObjectId>> _undoStack { get => CurrentState.UndoStack; set => CurrentState.UndoStack = value; }
+    private List<Point3d> _traversePath { get => CurrentState.TraversePath; set => CurrentState.TraversePath = value; }
+    private List<TraverseSegment> _segmentHistory { get => CurrentState.SegmentHistory; set => CurrentState.SegmentHistory = value; }
+    private double _plotScale { get => CurrentState.PlotScale; set => CurrentState.PlotScale = value; }
+    private double _prevPlotScale { get => CurrentState.PrevPlotScale; set => CurrentState.PrevPlotScale = value; }
+    private string _currentLayer { get => CurrentState.CurrentLayer; set => CurrentState.CurrentLayer = value; }
+    private bool _feetMode { get => CurrentState.FeetMode; set => CurrentState.FeetMode = value; }
+    private bool _distanceIsConverted { get => CurrentState.DistanceIsConverted; set => CurrentState.DistanceIsConverted = value; }
+
+    private Document _doc;
+    private AppSettings _config;
+    private bool _isBusy = false;
+    private bool _isSyncingScale = false;
+    private double GetModelSize(double paperSize) => paperSize * (_plotScale / 1000.0);
+
     private ScrollViewer svHistory = null!;
     private StackPanel pnlHistory = null!;
     private TextBlock lblStats = null!;
@@ -519,7 +574,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
     private TextBox txtBearing = null!, txtDistance = null!;
     private ComboBox cbScale = null!;
     private TextBlock lblBearingTrace = null!, lblDistanceTrace = null!;
-    private Button btnSound = null!;
+    private Button btnSound = null!, btnFeet = null!;
 
     // Buttons
     private Button btnQ = null!, btnW = null!, btnE = null!, btnA = null!, btnS = null!, btnD = null!;
@@ -541,30 +596,41 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         _doc = doc;
         _config = AppSettings.Load();
 
+        // Initialize state for the starting document
+        var state = GetOrCreateState(doc);
+
         try
         {
-            Database db = HostApplicationServices.WorkingDatabase;
+            Database db = doc.Database;
             AnnotationScale scale = db.Cannoscale;
             double factor = (scale.DrawingUnits / scale.PaperUnits) * 1000.0;
-
-            if (factor <= 0 || double.IsNaN(factor) || double.IsInfinity(factor))
-            {
-                _plotScale = 1000.0;
-            }
-            else
-            {
-                _plotScale = factor;
-            }
-            _prevPlotScale = _plotScale;
-            _doc.Editor.WriteMessage($"\nDEBUG: Detected Annotation Scale is 1:{_plotScale}");
+            state.PlotScale = (factor <= 0 || double.IsNaN(factor) || double.IsInfinity(factor)) ? 1000.0 : factor;
+            state.PrevPlotScale = state.PlotScale;
+            _doc.Editor.WriteMessage($"\nDEBUG: Detected Annotation Scale is 1:{state.PlotScale}");
         }
         catch
         {
-            _plotScale = 1000.0;
-            _prevPlotScale = 1000.0;
+            state.PlotScale = 1000.0;
+            state.PrevPlotScale = 1000.0;
         }
 
-        _doc.Database.SystemVariableChanged += Database_SystemVariableChanged;
+        // Hook system variable changes for scale syncing
+        try
+        {
+            _doc.Database.SystemVariableChanged += Database_SystemVariableChanged;
+        }
+        catch { }
+
+        // Hook AutoCAD active document switched and document closed events
+        try
+        {
+            AcApp.DocumentManager.DocumentActivated += DocumentManager_DocumentActivated;
+            AcApp.DocumentManager.DocumentToBeDestroyed += DocumentManager_DocumentToBeDestroyed;
+        }
+        catch { }
+
+        // Hook WPF Unloaded event to cleanly unregister all events
+        this.Unloaded += CadastreWpfWindow_Unloaded;
 
         InitializeCustomUI();
         InitializeProjectLayers();
@@ -573,6 +639,131 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         // Default to 'W' layer def from config
         _currentLayer = LayerConfig[Key.W].Name;
         HighlightActiveLayer(btnW);
+    }
+
+    private void DocumentManager_DocumentActivated(object sender, DocumentCollectionEventArgs e)
+    {
+        if (e.Document == null) return;
+        SwitchToDocument(e.Document);
+    }
+
+    private void DocumentManager_DocumentToBeDestroyed(object sender, DocumentCollectionEventArgs e)
+    {
+        if (e.Document != null)
+        {
+            try
+            {
+                e.Document.Database.SystemVariableChanged -= Database_SystemVariableChanged;
+            }
+            catch { }
+
+            _states.Remove(e.Document);
+        }
+    }
+
+    private void CadastreWpfWindow_Unloaded(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            AcApp.DocumentManager.DocumentActivated -= DocumentManager_DocumentActivated;
+            AcApp.DocumentManager.DocumentToBeDestroyed -= DocumentManager_DocumentToBeDestroyed;
+        }
+        catch { }
+
+        foreach (var doc in _states.Keys)
+        {
+            try
+            {
+                if (doc != null && !doc.IsDisposed)
+                {
+                    doc.Database.SystemVariableChanged -= Database_SystemVariableChanged;
+                }
+            }
+            catch { }
+        }
+    }
+
+    private void SwitchToDocument(Document newDoc)
+    {
+        if (newDoc == null || newDoc.IsDisposed) return;
+
+        // Unsubscribe from old doc's db event
+        if (_doc != null && !_doc.IsDisposed)
+        {
+            try
+            {
+                _doc.Database.SystemVariableChanged -= Database_SystemVariableChanged;
+            }
+            catch { }
+        }
+
+        // Switch active doc reference
+        _doc = newDoc;
+
+        // Subscribe to new doc's db event
+        try
+        {
+            _doc.Database.SystemVariableChanged += Database_SystemVariableChanged;
+        }
+        catch { }
+
+        // Get or create state for the switched document
+        var state = GetOrCreateState(_doc);
+
+        // Update UI to match the new document state
+        this.Dispatcher.BeginInvoke(new Action(() => {
+            try
+            {
+                if (cbScale != null)
+                {
+                    cbScale.Text = $"1:{state.PlotScale:0}";
+                }
+
+                // Sync drawing layer settings and button styles for new drawing context
+                InitializeProjectLayers();
+                UpdateLayerButtons();
+
+                // Highlight active layer button
+                Button targetBtn = btnW; // fallback
+                if (state.CurrentLayer == LayerConfig[Key.Q].Name) targetBtn = btnQ;
+                else if (state.CurrentLayer == LayerConfig[Key.W].Name) targetBtn = btnW;
+                else if (state.CurrentLayer == LayerConfig[Key.E].Name) targetBtn = btnE;
+                else if (state.CurrentLayer == LayerConfig[Key.A].Name) targetBtn = btnA;
+                else if (state.CurrentLayer == LayerConfig[Key.S].Name) targetBtn = btnS;
+                else if (state.CurrentLayer == LayerConfig[Key.D].Name) targetBtn = btnD;
+                HighlightActiveLayer(targetBtn);
+
+                // Reload traverse segment history panel
+                UpdateHistoryUi();
+
+                // Update sound icon
+                UpdateSoundIcon();
+
+                // Sync unit toggle button UI
+                if (btnFeet != null)
+                {
+                    if (state.FeetMode)
+                    {
+                        btnFeet.Background = new SolidColorBrush(Color.FromRgb(243, 156, 18));
+                        btnFeet.Foreground = Brushes.Black;
+                        btnFeet.Content = "ft";
+                        btnFeet.FontWeight = FontWeights.Bold;
+                        if (lblDistanceTrace != null)
+                            lblDistanceTrace.Text = "[UNIT ACTIVE] Input distances in FEET (will convert to METERS).";
+                    }
+                    else
+                    {
+                        btnFeet.Background = new SolidColorBrush(Color.FromRgb(60, 60, 60));
+                        btnFeet.Foreground = Brushes.White;
+                        btnFeet.Content = "m";
+                        btnFeet.FontWeight = FontWeights.SemiBold;
+                        if (lblDistanceTrace != null)
+                            lblDistanceTrace.Text = "[UNIT ACTIVE] Input distances in METERS.";
+                    }
+                }
+            }
+            catch { }
+        }));
     }
 
     private double GetScaleFactor(AnnotationScale scale)
@@ -588,8 +779,11 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         {
             try
             {
-                Database db = _doc.Database;
-                double newScale = GetScaleFactor(db.Cannoscale); // Task 3: CAD -> Plugin Sync
+                Database? db = sender as Database;
+                if (db == null && _doc != null && !_doc.IsDisposed) db = _doc.Database;
+                if (db == null) return;
+
+                double newScale = GetScaleFactor(db.Cannoscale);
                 
                 if (Math.Abs(_plotScale - newScale) > 1e-6)
                 {
@@ -648,11 +842,6 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
             return collection.GetContext($"1:{targetScale}") != null;
         }
         catch { return false; }
-    }
-
-    private void CadastreWpfWindow_Closed(object? sender, EventArgs e)
-    {
-        _doc.Database.SystemVariableChanged -= Database_SystemVariableChanged;
     }
     #endregion
 
@@ -1275,7 +1464,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         Grid.SetColumn(txtDistance, 0);
         gDistSub.Children.Add(txtDistance);
 
-        Button btnFeet = new Button() {
+        btnFeet = new Button() {
             Content = "m",
             Width = 38,
             Height = 32,
@@ -2216,10 +2405,14 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
     private bool ValidateDocument()
     {
         var doc = AcApp.DocumentManager.MdiActiveDocument;
-        if (doc == null || doc != _doc)
+        if (doc == null)
         {
-            MessageBox.Show("Active document changed or lost. Please restart the tool in the correct document.");
+            MessageBox.Show("No active drawing document found.", "Document Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
             return false;
+        }
+        if (doc != _doc)
+        {
+            SwitchToDocument(doc);
         }
         return true;
     }
