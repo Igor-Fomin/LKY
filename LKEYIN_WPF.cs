@@ -495,7 +495,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         public Point3d CurrentPoint { get; set; }
         public Point3d LastCreatedVertex { get; set; }
         public bool HasStartPoint { get; set; } = false;
-        public Stack<List<ObjectId>> UndoStack { get; set; } = new Stack<List<ObjectId>>();
+        public List<List<ObjectId>> UndoStack { get; set; } = new List<List<ObjectId>>();
         public List<Point3d> TraversePath { get; set; } = new List<Point3d>();
         public List<TraverseSegment> SegmentHistory { get; set; } = new List<TraverseSegment>();
         public double PlotScale { get; set; } = 1000.0;
@@ -546,7 +546,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
     private Point3d _currentPoint { get => CurrentState.CurrentPoint; set => CurrentState.CurrentPoint = value; }
     private Point3d _lastCreatedVertex { get => CurrentState.LastCreatedVertex; set => CurrentState.LastCreatedVertex = value; }
     private bool _hasStartPoint { get => CurrentState.HasStartPoint; set => CurrentState.HasStartPoint = value; }
-    private Stack<List<ObjectId>> _undoStack { get => CurrentState.UndoStack; set => CurrentState.UndoStack = value; }
+    private List<List<ObjectId>> _undoStack { get => CurrentState.UndoStack; set => CurrentState.UndoStack = value; }
     private List<Point3d> _traversePath { get => CurrentState.TraversePath; set => CurrentState.TraversePath = value; }
     private List<TraverseSegment> _segmentHistory { get => CurrentState.SegmentHistory; set => CurrentState.SegmentHistory = value; }
     private double _plotScale { get => CurrentState.PlotScale; set => CurrentState.PlotScale = value; }
@@ -1970,7 +1970,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
             DwgDataManager.SetNextPointNumber(nextNum + 1, tr, btr.Database);
         }
 
-        _undoStack.Push(createdEntities);
+        _undoStack.Add(createdEntities);
         
         _segmentHistory.Add(new TraverseSegment {
             Index = _segmentHistory.Count + 1,
@@ -1994,7 +1994,8 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
         using (DocumentLock loc = _doc.LockDocument())
         using (Transaction tr = _doc.TransactionManager.StartTransaction())
         {
-            List<ObjectId> stepObjects = _undoStack.Pop();
+            List<ObjectId> stepObjects = _undoStack[_undoStack.Count - 1];
+            _undoStack.RemoveAt(_undoStack.Count - 1);
             bool pointDeleted = false;
             foreach (ObjectId id in stepObjects)
             {
@@ -2022,6 +2023,110 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                 UpdateHistoryUi();
             }
         }
+    }
+
+    private void ChangeSegmentLayer(int index, string newLayerName)
+    {
+        if (index < 0 || index >= _segmentHistory.Count) return;
+        if (!ValidateDocument()) return;
+
+        ExecuteUiAction(() => {
+            using (DocumentLock loc = _doc.LockDocument())
+            using (Transaction tr = _doc.Database.TransactionManager.StartTransaction())
+            {
+                Database db = _doc.Database;
+                
+                var configEntry = LayerConfig.Values.FirstOrDefault(ld => ld.Name == newLayerName);
+                if (!string.IsNullOrEmpty(configEntry.Name))
+                {
+                    var acCol = AcColor.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, configEntry.Color);
+                    EnsureLayerExistsInternal(newLayerName, acCol, tr, db);
+                }
+                else
+                {
+                    EnsureLayerExistsInternal(newLayerName, null, tr, db);
+                }
+
+                string targetBrgLayer, targetDistLayer;
+                string targetBrgStyle, targetDistStyle;
+                if (newLayerName == "BOUNDARY_SUBJECT")
+                {
+                    targetBrgLayer = CadConstants.BDY_BEARING;
+                    targetDistLayer = CadConstants.BDY_DISTANCE;
+                    targetBrgStyle = "STENDOT100";
+                    targetDistStyle = "STENDOT100S";
+                }
+                else
+                {
+                    targetBrgLayer = CadConstants.CONNECTION_BEAR;
+                    targetDistLayer = CadConstants.CONNECTION_DIST;
+                    targetBrgStyle = "STENDOT80";
+                    targetDistStyle = "STENDOT80";
+                }
+
+                EnsureLayerExistsInternal(targetBrgLayer, null, tr, db);
+                EnsureLayerExistsInternal(targetDistLayer, null, tr, db);
+
+                ObjectId styleBrgId = GetTextStyleId(tr, targetBrgStyle, db);
+                ObjectId styleDistId = GetTextStyleId(tr, targetDistStyle, db);
+
+                List<ObjectId> segmentEntities = _undoStack[index];
+                foreach (ObjectId id in segmentEntities)
+                {
+                    if (id.IsErased) continue;
+                    
+                    Entity ent = (Entity)tr.GetObject(id, OpenMode.ForWrite);
+                    
+                    if (ent is Autodesk.AutoCAD.DatabaseServices.Line ln)
+                    {
+                        ln.Layer = newLayerName;
+                        if (!string.IsNullOrEmpty(configEntry.Name))
+                        {
+                            ln.LinetypeScale = configEntry.LinetypeScale;
+                        }
+                    }
+                    else if (ent is DBText dbt)
+                    {
+                        if (dbt.Layer == CadConstants.BDY_BEARING || dbt.Layer == CadConstants.CONNECTION_BEAR)
+                        {
+                            dbt.Layer = targetBrgLayer;
+                            dbt.TextStyleId = styleBrgId;
+                            dbt.Height = GetModelSize(CadConstants.GetReferenceHeight(targetBrgLayer));
+                        }
+                        else if (dbt.Layer == CadConstants.BDY_DISTANCE || dbt.Layer == CadConstants.CONNECTION_DIST)
+                        {
+                            dbt.Layer = targetDistLayer;
+                            dbt.TextStyleId = styleDistId;
+                            dbt.Height = GetModelSize(CadConstants.GetReferenceHeight(targetDistLayer));
+                        }
+                    }
+                    else if (ent is MText mt)
+                    {
+                        if (mt.Layer == CadConstants.BDY_BEARING || mt.Layer == CadConstants.CONNECTION_BEAR)
+                        {
+                            mt.Layer = targetBrgLayer;
+                            mt.TextStyleId = styleBrgId;
+                            mt.TextHeight = GetModelSize(CadConstants.GetReferenceHeight(targetBrgLayer));
+                        }
+                        else if (mt.Layer == CadConstants.BDY_DISTANCE || mt.Layer == CadConstants.CONNECTION_DIST)
+                        {
+                            mt.Layer = targetDistLayer;
+                            mt.TextStyleId = styleDistId;
+                            mt.TextHeight = GetModelSize(CadConstants.GetReferenceHeight(targetDistLayer));
+                        }
+                    }
+                }
+
+                tr.Commit();
+                _doc.Editor.UpdateScreen();
+            }
+
+            var currentSeg = _segmentHistory[index];
+            currentSeg.Layer = newLayerName;
+            _segmentHistory[index] = currentSeg;
+
+            UpdateHistoryUi();
+        });
     }
 
     private void ToggleLayerVisibility(string layerName, bool isVisible)
@@ -2442,7 +2547,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                 TextSettings commSettings = new TextSettings { Style = "ROMANS80", Size = 2.5 };
                 Entity txt = CreateText(finalComment, CadConstants.SYMB_TEXT, _lastCreatedVertex, AttachmentPoint.MiddleLeft, tr, _doc.Database, commSettings);
                 ObjectId txtId = AddToDb(txt, btr, tr);
-                if (_undoStack.Count > 0) _undoStack.Peek().Add(txtId);
+                if (_undoStack.Count > 0) _undoStack[_undoStack.Count - 1].Add(txtId);
                 tr.Commit(); _doc.Editor.UpdateScreen();
             }
         }
@@ -2485,7 +2590,7 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                         TextSettings commSettings = new TextSettings { Style = "ROMANS80", Size = 2.5 };
                         Entity txt = CreateText(comm, CadConstants.SYMB_TEXT, endPt, AttachmentPoint.MiddleLeft, tr, _doc.Database, commSettings);
                         ObjectId txtId = AddToDb(txt, btr, tr);
-                        if (_undoStack.Count > 0) _undoStack.Peek().Add(txtId);
+                        if (_undoStack.Count > 0) _undoStack[_undoStack.Count - 1].Add(txtId);
                     }
                     tr.Commit(); _doc.Editor.UpdateScreen();
                 }
@@ -2664,6 +2769,90 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                 }
             }
             catch {}
+
+            // Setup Context Menu for interactive layer changing
+            ContextMenu menu = new ContextMenu() {
+                Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(60, 60, 60)),
+                BorderThickness = new Thickness(1),
+                HasDropShadow = true
+            };
+
+            int currentSegIdx = i;
+            foreach (var kvp in LayerConfig)
+            {
+                var cfg = kvp.Value;
+                
+                // Get standard layer color
+                Color c = Colors.Gray;
+                try
+                {
+                    using (Transaction tr = _doc.Database.TransactionManager.StartTransaction())
+                    {
+                        LayerTable lt = (LayerTable)tr.GetObject(_doc.Database.LayerTableId, OpenMode.ForRead);
+                        if (lt.Has(cfg.Name))
+                        {
+                            var ltr = (LayerTableRecord)tr.GetObject(lt[cfg.Name], OpenMode.ForRead);
+                            c = Color.FromRgb(ltr.Color.ColorValue.R, ltr.Color.ColorValue.G, ltr.Color.ColorValue.B);
+                        }
+                        else
+                        {
+                            var acCol = AcColor.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, cfg.Color);
+                            c = Color.FromRgb(acCol.ColorValue.R, acCol.ColorValue.G, acCol.ColorValue.B);
+                        }
+                        tr.Commit();
+                    }
+                }
+                catch
+                {
+                    var acCol = AcColor.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, cfg.Color);
+                    c = Color.FromRgb(acCol.ColorValue.R, acCol.ColorValue.G, acCol.ColorValue.B);
+                }
+
+                string displayHeader = cfg.Name;
+                if (displayHeader == "BOUNDARY_SUBJECT") displayHeader = "SUBJECT";
+                else if (displayHeader == "BOUNDARY_ADJOINING") displayHeader = "ADJOINING";
+                else if (displayHeader == "CONNECTIONS") displayHeader = "CONNECTION";
+                else if (displayHeader == "BDY_EASEMENT") displayHeader = "BDY_EASEME";
+                else if (displayHeader == "ADDITIONAL_1") displayHeader = "ADDITIONAL (Magenta)";
+                else if (displayHeader == "ADDITIONAL_2") displayHeader = "ADDITIONAL (Green)";
+                else displayHeader = displayHeader.Replace("BOUNDARY_", "").Replace("CONNECTION_", "").Replace("_", " ");
+
+                System.Windows.Controls.MenuItem item = new System.Windows.Controls.MenuItem() {
+                    Header = displayHeader,
+                    Foreground = Brushes.White,
+                    Height = 28,
+                    FontSize = 11,
+                    FontWeight = FontWeights.Medium,
+                    Background = Brushes.Transparent
+                };
+
+                Border badge = new Border() {
+                    Width = 10,
+                    Height = 10,
+                    CornerRadius = new CornerRadius(5),
+                    Background = new SolidColorBrush(c),
+                    BorderBrush = Brushes.Black,
+                    BorderThickness = new Thickness(0.5),
+                    Margin = new Thickness(2, 0, 2, 0)
+                };
+                item.Icon = badge;
+
+                string targetLayerName = cfg.Name;
+                item.Click += (s, ev) => {
+                    ChangeSegmentLayer(currentSegIdx, targetLayerName);
+                };
+                
+                menu.Items.Add(item);
+            }
+
+            pill.ContextMenu = menu;
+            pill.Cursor = Cursors.Hand;
+            pill.ToolTip = "Left or right-click to change layer";
+            pill.MouseLeftButtonDown += (s, ev) => {
+                menu.IsOpen = true;
+                ev.Handled = true;
+            };
             
             Grid.SetColumn(tbIdx, 0); row.Children.Add(tbIdx);
             Grid.SetColumn(tbBrg, 1); row.Children.Add(tbBrg);
@@ -2903,8 +3092,8 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
                     _currentLayer = selLine.Layer;
 
                     List<ObjectId> created = CreateAnnotatedText(btr, tr, selLine, rawBrg, dist, cadAngleRad);
-                    if (_undoStack.Count > 0) _undoStack.Peek().AddRange(created);
-                    else _undoStack.Push(created);
+                    if (_undoStack.Count > 0) _undoStack[_undoStack.Count - 1].AddRange(created);
+                    else _undoStack.Add(created);
 
                     _currentLayer = originalLayer;
 
