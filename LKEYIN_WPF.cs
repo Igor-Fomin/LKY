@@ -775,6 +775,12 @@ public class CadastreWpfWindow : System.Windows.Controls.UserControl
 
     private void Database_SystemVariableChanged(object sender, Autodesk.AutoCAD.DatabaseServices.SystemVariableChangedEventArgs e)
     {
+        // Suppress automatic scale updates if the palette is closed/invisible
+        if (LKeyinCommand.PaletteSetInstance == null || !LKeyinCommand.PaletteSetInstance.Visible)
+        {
+            return;
+        }
+
         if (e.Name == "CANNOSCALE" && !_isSyncingScale)
         {
             try
